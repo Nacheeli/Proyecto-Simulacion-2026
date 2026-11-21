@@ -474,7 +474,10 @@ class App(tk.Tk):
 
     # ======================================================= pestaña 4
     def _pestania_decision(self, pagina):
-        c = self._pagina(pagina)
+        desp = PanelDesplazable(pagina, ancho=400)
+        desp.pack(fill=tk.BOTH, expand=True)
+        c = tk.Frame(desp.interior, bg=E.FONDO)
+        c.pack(fill=tk.BOTH, expand=True, padx=SEP, pady=SEP)
         self.kpi4 = FilaKPI(c, [("mejor", "Mejor alternativa", None), ("sev", "Corte de severidad", None),
                                 ("pf", "Malla = Fondo", None), ("ps", "Malla = Sin protección", None)])
         self.kpi4.pack(fill=tk.X)
@@ -487,8 +490,10 @@ class App(tk.Tk):
         for k in range(3):
             graf.columnconfigure(k, weight=1, uniform="g4")
         for k in range(2):
-            graf.rowconfigure(k, weight=1, uniform="g4f")
+            # altura fija: al abrir la tabla de persistencia la pestaña se desplaza, los gráficos no se aplastan
+            graf.rowconfigure(k, minsize=int(300 * self.escala))
         grupo = GrupoPlegable(c, "Tabla de persistencia: Markov real contra años independientes", abierto=False)
+        self.grupo_pers = grupo
         grupo.pack(fill=tk.X, pady=(6, 0))
         t = Tarjeta(grupo.cuerpo, None, padding=10)
         t.pack(fill=tk.X)
@@ -499,6 +504,7 @@ class App(tk.Tk):
         self.tabla_pers.pack(fill=tk.X)
         self.lbl_pers = tk.Label(t.cuerpo, bg=E.TARJETA, fg=E.TEXTO_2, anchor="w", justify="left", font=fuente(self, 9))
         self.lbl_pers.pack(fill=tk.X, pady=(6, 0))
+        t.cuerpo.bind("<Configure>", lambda e: self.lbl_pers.configure(wraplength=max(200, e.width - 10)), add="+")
 
     def _mostrar_decision(self, R):
         p, cr, cortes = R["p"], R["cruce_sev"], R["cortes"]

@@ -71,8 +71,8 @@ def danio_anual(fig, R):
     p = R["p"]
     d = R["res"].danio.ravel() * 100
     dacc = R["dacc"]
-    ax.axvspan(dacc["con_lucha"] * 100, dacc["sin_lucha"] * 100, color=E.BANDA_DACC, zorder=0,
-               label="Rango DACC")
+    ax.axvspan(dacc["con_lucha"] * 100, dacc["sin_lucha"] * 100, facecolor=E.BANDA_DACC, edgecolor=E.SUPUESTO,
+               lw=0.9, zorder=0, label="Rango DACC")
     positivos = d[d > 0]
     ax.hist(positivos, bins=np.arange(0, 101, 5), color=E.SIMULADO, edgecolor="white",
             weights=np.full(positivos.size, 100 / d.size))
@@ -120,10 +120,11 @@ def histogramas_van(fig, R):
         media, p5 = ind[a]["van_media"] / 1e6, ind[a]["van_p5"] / 1e6
         ax.axvline(media, color=E.TEXTO, lw=1.4)
         ax.axvline(p5, color=E.TEXTO, lw=1.2, ls=":")
+        caja = {"boxstyle": "square,pad=0.1", "facecolor": "white", "edgecolor": "none", "alpha": 0.85}
         ax.text(media, 0.98, f" media {fmt(media, 1)}", transform=ax.get_xaxis_transform(),
-                ha="left", va="top", fontsize="small", color=E.TEXTO)
-        ax.text(p5, 0.88, f"P5 {fmt(p5, 1)} ", transform=ax.get_xaxis_transform(),
-                ha="right", va="top", fontsize="small", color=E.TEXTO)
+                ha="left", va="top", fontsize="small", color=E.TEXTO, bbox=caja)
+        ax.text(p5, 0.72, f"P5 {fmt(p5, 1)} ", transform=ax.get_xaxis_transform(),
+                ha="right", va="top", fontsize="small", color=E.TEXTO, bbox=caja)
         ax.axvline(0, color=E.TEXTO_2, lw=0.6)
         ax.set_title(A[a]["nombre"])
         ax.set_xlabel(f"VAN {p.anios} años al {fmt(p.tasa_descuento * 100, 0)} % (M$)")
@@ -169,8 +170,8 @@ def precio_diferencia(fig, R):
             ax.axvline(x, color=E.TEXTO, lw=0.8, ls="-.")
             borde = " " if ha == "left" else ""
             fin = "" if ha == "left" else " "
-            ax.text(x, 0.97, f"{borde}${fmt(x, 0)}/kg{fin}\n{borde}{texto}{fin}", transform=ax.get_xaxis_transform(),
-                    fontsize="small", color=E.TEXTO, va="top", ha=ha)
+            ax.text(x, 0.03, f"{borde}${fmt(x, 0)}/kg{fin}\n{borde}{texto}{fin}", transform=ax.get_xaxis_transform(),
+                    fontsize="small", color=E.TEXTO, va="bottom", ha=ha)
     ax.axvline(p.precio_uva, color=E.TEXTO_2, ls=":", lw=1)
     ax.set_xlabel("precio de la uva ($/kg)")
     ax.set_ylabel("Δ VAN vs Fondo (M$)")
@@ -275,9 +276,10 @@ def mapa_hectareas_severidad(fig, R):
     xs, ys = np.asarray(R["hectareas"]), np.asarray(s["factores"])
     dy = p.sens_sev_paso
     _mapa(ax, s["mapa_ha"], xs, ys, 1, dy, limite=s["limite_ha"])
-    ax.axvline(p.fca_max_hectareas + 0.5, color=E.TEXTO, lw=1.2)
-    ax.text(p.fca_max_hectareas + 1.2, (ys[0] + ys[-1]) / 2, f"límite del Fondo ({fmt(p.fca_max_hectareas, 0)} ha)",
-            rotation=90, fontsize="small", color="white", va="center", ha="left")
+    ax.axvline(p.fca_max_hectareas + 0.5, ymin=0, ymax=0.86, color=E.TEXTO, lw=1.2)
+    ax.text(p.fca_max_hectareas + 0.5, 0.89, f"límite del Fondo ({fmt(p.fca_max_hectareas, 0)} ha)",
+            transform=ax.get_xaxis_transform(), fontsize="small", color=E.TEXTO, va="bottom", ha="center",
+            zorder=6, bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": E.BORDE, "lw": 0.6})
     ax.plot(p.hectareas, p.severidad, marker="*", ms=13, color="white", mec=E.TEXTO, mew=1, zorder=5)
     ax.set_xlabel("hectáreas" + (f" (costo fijo ${fmt(p.costo_fijo_finca / 1e6, 2)} M)" if p.costo_fijo_finca else ""))
     ax.set_ylabel("severidad")
