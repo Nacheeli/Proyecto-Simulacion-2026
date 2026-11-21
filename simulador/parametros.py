@@ -30,21 +30,26 @@ class Parametros:
     p_s_a_g: float = R.MARKOV_P_S_A_G
     p_g_a_s: float = R.MARKOV_P_G_A_S
     estado_inicial: str = S.ESTADO_INICIAL                     # SUPUESTO
+    # Escenario: multiplica la cantidad de granizadas de cada año (1 = datos reales)
+    frecuencia_mult: float = 1.0
 
-    # Daño por evento – SUPUESTO
-    danio_valores: list = field(default_factory=lambda: list(S.TABLA_DANIO_VALORES))
+    # Daño por evento – SUPUESTO (intervalos)
+    danio_desde: list = field(default_factory=lambda: list(S.TABLA_DANIO_DESDE))
+    danio_hasta: list = field(default_factory=lambda: list(S.TABLA_DANIO_HASTA))
     danio_probabilidades: list = field(default_factory=lambda: list(S.TABLA_DANIO_PROBABILIDADES))
 
     # Economía – SUPUESTOS
     precio_uva: float = S.PRECIO_UVA_POR_KG
     costo_produccion_ha: float = S.COSTO_PRODUCCION_POR_HA
     tipo_cambio: float = S.TIPO_DE_CAMBIO
+    tasa_descuento: float = S.TASA_DESCUENTO
 
-    # Fondo Compensador – real (salvo el modo)
+    # Fondo Compensador – real (salvo modo y condición)
     fca_aporte_ha: float = R.FCA_APORTE_POR_HA
     fca_compensacion_ha: float = R.FCA_COMPENSACION_POR_HA
     fca_umbral: float = R.FCA_UMBRAL_DANIO
     fca_modo: str = S.FCA_MODO_COMPENSACION                    # SUPUESTO
+    fca_condicion: str = S.FCA_CONDICION_PAGO                  # SUPUESTO
 
     # Malla – costo y vida dentro del rango real; eficacia y pago SUPUESTOS
     malla_costo_usd_ha: float = S.MALLA_COSTO_USD_HA
@@ -57,9 +62,20 @@ class Parametros:
     # Referencia DACC – SUPUESTO
     superficie_cultivada_sur: float = S.SUPERFICIE_CULTIVADA_SUR_HA
 
+    # Sensibilidad (pestaña 4)
+    sens_replicas: int = 2000
+    sens_precio_min: float = 200
+    sens_precio_max: float = 800
+    sens_precio_paso: float = 50
+    sens_ha_max: int = 30
+    sens_frec_min: float = 0.5
+    sens_frec_max: float = 2.0
+    sens_frec_paso: float = 0.25
+    criterio_p5_minimo: float = 0.0   # "mejor" = mayor VAN medio con P5 del VAN > este valor
+
     def validar(self):
         errores = []
-        if self.replicas < 1 or self.anios < 1:
+        if self.replicas < 1 or self.anios < 1 or self.sens_replicas < 1:
             errores.append("Réplicas y años deben ser al menos 1.")
         if self.hectareas <= 0:
             errores.append("Las hectáreas deben ser positivas.")
@@ -68,16 +84,23 @@ class Parametros:
         for nombre in ("p_s_a_g", "p_g_a_s", "malla_eficacia", "fca_umbral"):
             if not 0 <= getattr(self, nombre) <= 1:
                 errores.append(f"{nombre} debe estar entre 0 y 1.")
-        if len(self.danio_valores) != len(self.danio_probabilidades):
+        if self.frecuencia_mult < 0:
+            errores.append("El multiplicador de frecuencia no puede ser negativo.")
+        if self.tasa_descuento <= -1 or self.malla_tasa_anual < 0:
+            errores.append("Tasas inválidas.")
+        n = len(self.danio_probabilidades)
+        if len(self.danio_desde) != n or len(self.danio_hasta) != n:
             errores.append("La tabla de daño tiene columnas de distinto largo.")
         if abs(sum(self.danio_probabilidades) - 1) > 1e-6:
             errores.append(
                 f"Las probabilidades de daño suman {sum(self.danio_probabilidades):.4f}, deben sumar 1."
             )
-        if any(not 0 <= d <= 1 for d in self.danio_valores):
-            errores.append("Los daños deben estar entre 0 y 1 (0 % y 100 %).")
+        if any(not 0 <= a <= b <= 1 for a, b in zip(self.danio_desde, self.danio_hasta)):
+            errores.append("Cada intervalo de daño debe cumplir 0 % <= desde <= hasta <= 100 %.")
         if self.fca_modo not in ("proporcional", "fijo"):
             errores.append("Modo del Fondo: 'proporcional' o 'fijo'.")
+        if self.fca_condicion not in (">=", ">"):
+            errores.append("Condición de pago del Fondo: '>=' o '>'.")
         if self.malla_modo_pago not in ("amortizado", "contado", "financiado"):
             errores.append("Pago de la malla: 'amortizado', 'contado' o 'financiado'.")
         if self.malla_vida_util < 1 or self.malla_cuotas < 1:

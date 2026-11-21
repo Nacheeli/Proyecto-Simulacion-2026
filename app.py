@@ -21,6 +21,7 @@ from simulador.danio import referencia_dacc
 from simulador.finca import ALTERNATIVAS, NOMBRES
 from simulador.generador import GeneradorLCG, prueba_chi_cuadrado
 from simulador import montecarlo as mc
+from simulador import sensibilidad as sens
 
 COLORES = {"sin_proteccion": "#c0504d", "fondo": "#4f81bd", "malla": "#5a9e3a"}
 COLOR_REAL = "#7f7f7f"
@@ -75,17 +76,20 @@ GRUPOS = [
         ("p_s_a_g", "P(S → G)", "R", 1, float),
         ("p_g_a_s", "P(G → S)", "R", 1, float),
         ("estado_inicial", "Estado del año 1", "S", ["estacionaria", "G", "S"], str),
+        ("frecuencia_mult", "Multiplicador granizadas", "", 1, float),
     ]),
     ("Economía", [
         ("precio_uva", "Precio uva ($/kg)", "S", 1, float),
         ("costo_produccion_ha", "Costo producción ($/ha/año)", "S", 1, float),
         ("tipo_cambio", "Tipo de cambio ($/USD)", "S", 1, float),
+        ("tasa_descuento", "Tasa de descuento real (%)", "S", 100, float),
     ]),
     ("Fondo Compensador (Específica, Sur)", [
         ("fca_aporte_ha", "Aporte ($/ha/año)", "R", 1, float),
         ("fca_compensacion_ha", "Compensación ($/ha)", "R", 1, float),
         ("fca_umbral", "Umbral de daño (%)", "R", 100, float),
         ("fca_modo", "Compensación", "S", ["proporcional", "fijo"], str),
+        ("fca_condicion", "Paga si daño … umbral", "S", [">=", ">"], str),
     ]),
     ("Malla antigranizo", [
         ("malla_costo_usd_ha", "Costo (USD/ha)", "R", 1, float),
@@ -97,6 +101,17 @@ GRUPOS = [
     ]),
     ("Referencia DACC", [
         ("superficie_cultivada_sur", "Sup. cultivada Oasis Sur (ha)", "S", 1, float),
+    ]),
+    ("Sensibilidad (pestaña 4)", [
+        ("sens_replicas", "Réplicas por punto del mapa", "", 1, int),
+        ("sens_precio_min", "Precio desde ($/kg)", "", 1, float),
+        ("sens_precio_max", "Precio hasta ($/kg)", "", 1, float),
+        ("sens_precio_paso", "Precio paso ($/kg)", "", 1, float),
+        ("sens_ha_max", "Hectáreas hasta", "", 1, int),
+        ("sens_frec_min", "Mult. granizadas desde", "", 1, float),
+        ("sens_frec_max", "Mult. granizadas hasta", "", 1, float),
+        ("sens_frec_paso", "Mult. granizadas paso", "", 1, float),
+        ("criterio_p5_minimo", "Criterio: P5 del VAN > ($)", "", 1, float),
     ]),
 ]
 
@@ -126,6 +141,7 @@ class App(tk.Tk):
         self._pestania_clima()
         self._pestania_corrida()
         self._pestania_montecarlo()
+        self._pestania_decision()
 
         self.estado = tk.StringVar(value="Listo. Presioná «Calcular».")
         ttk.Label(self, textvariable=self.estado, anchor="w", relief="sunken").pack(fill=tk.X)
@@ -207,11 +223,12 @@ class App(tk.Tk):
                 replica = valor
             else:
                 setattr(p, attr, valor)
-        valores, probs = [], []
-        for var_d, var_p in self.vars_danio:
-            valores.append(leer_numero(var_d.get()) / 100)
+        desde, hasta, probs = [], [], []
+        for var_a, var_b, var_p in self.vars_danio:
+            desde.append(leer_numero(var_a.get()) / 100)
+            hasta.append(leer_numero(var_b.get()) / 100)
             probs.append(leer_numero(var_p.get()) / 100)
-        p.danio_valores, p.danio_probabilidades = valores, probs
+        p.danio_desde, p.danio_hasta, p.danio_probabilidades = desde, hasta, probs
         p.validar()
         if not 1 <= replica <= p.replicas:
             raise ValueError(f"La réplica a mostrar debe estar entre 1 y {p.replicas}.")
@@ -235,8 +252,8 @@ class App(tk.Tk):
         f_dias.pack(side=tk.LEFT, fill=tk.Y, padx=4)
         cols = ("dias", "anios", "real", "acum", "sim")
         self.tv_dias = ttk.Treeview(f_dias, columns=cols, show="headings", height=8)
-        for c, t, w in zip(cols, ("Días", "Años", "Frec. real", "Acum. real", "Frec. simul."),
-                           (45, 50, 80, 85, 105)):
+        for c, t, w in zip(cols, ("Días", "Años", "Real", "Acum. real", "Simulada"),
+                           (38, 42, 68, 72, 78)):
             self.tv_dias.heading(c, text=t)
             self.tv_dias.column(c, width=w, anchor="center")
         self.tv_dias.pack(padx=4, pady=4)
@@ -244,17 +261,18 @@ class App(tk.Tk):
         # Tabla de daño editable
         f_danio = ttk.LabelFrame(arriba, text="Daño por granizada (S)")
         f_danio.pack(side=tk.LEFT, fill=tk.Y, padx=4)
-        ttk.Label(f_danio, text="Daño %").grid(row=0, column=0, padx=4)
-        ttk.Label(f_danio, text="Prob. %").grid(row=0, column=1, padx=4)
+        for col, texto in enumerate(("Desde %", "Hasta %", "Prob. %")):
+            ttk.Label(f_danio, text=texto).grid(row=0, column=col, padx=2)
         p = Parametros()
-        for i, (d, pr) in enumerate(zip(p.danio_valores, p.danio_probabilidades), start=1):
-            vd, vp = tk.StringVar(value=fmt(d * 100, 0)), tk.StringVar(value=fmt(pr * 100, 1))
-            ttk.Entry(f_danio, textvariable=vd, width=7, justify="right").grid(row=i, column=0, padx=4, pady=1)
-            ttk.Entry(f_danio, textvariable=vp, width=7, justify="right").grid(row=i, column=1, padx=4, pady=1)
-            vp.trace_add("write", lambda *a: self._actualizar_suma_danio())
-            self.vars_danio.append((vd, vp))
+        for i, (a, b, pr) in enumerate(zip(p.danio_desde, p.danio_hasta, p.danio_probabilidades), start=1):
+            va, vb = tk.StringVar(value=fmt(a * 100, 0)), tk.StringVar(value=fmt(b * 100, 0))
+            vp = tk.StringVar(value=fmt(pr * 100, 1))
+            for col, v in enumerate((va, vb, vp)):
+                ttk.Entry(f_danio, textvariable=v, width=5, justify="right").grid(row=i, column=col, padx=2, pady=1)
+            vp.trace_add("write", lambda *x: self._actualizar_suma_danio())
+            self.vars_danio.append((va, vb, vp))
         self.lbl_suma_danio = ttk.Label(f_danio)
-        self.lbl_suma_danio.grid(row=len(self.vars_danio) + 1, column=0, columnspan=2, pady=2)
+        self.lbl_suma_danio.grid(row=len(self.vars_danio) + 1, column=0, columnspan=3, pady=2)
         self._actualizar_suma_danio()
 
         # Verificación
@@ -269,7 +287,7 @@ class App(tk.Tk):
 
     def _actualizar_suma_danio(self):
         try:
-            total = sum(leer_numero(vp.get()) for _, vp in self.vars_danio)
+            total = sum(leer_numero(vp.get()) for _, _, vp in self.vars_danio)
             ok = abs(total - 100) < 1e-6
             self.lbl_suma_danio.configure(text=f"Suma: {fmt(total, 1)} %" + ("" if ok else "  ≠ 100"),
                                           foreground="black" if ok else "red")
@@ -314,18 +332,24 @@ class App(tk.Tk):
         gen = GeneradorLCG(p.semilla, p.lcg_a, p.lcg_c, p.lcg_m)
         chi = prueba_chi_cuadrado(gen.generar(10_000), intervalos=10)
         dacc = referencia_dacc(p.superficie_cultivada_sur)
+        eq = mc.equilibrio_fondo(res)
         self.lbl_verificacion.configure(text=(
-            "Prueba χ² del generador\n"
-            f" n=10.000  k=10  α=0,05\n"
-            f" χ²={fmt(chi['estadistico'])}  crít.={fmt(chi['critico'])}\n"
-            f" → {'NO se rechaza' if chi['acepta_h0'] else 'SE RECHAZA'} H0\n\n"
+            "Prueba χ² generador\n"
+            f" n=10.000 k=10 α=0,05\n"
+            f" χ²={fmt(chi['estadistico'])} crít={fmt(chi['critico'])}\n"
+            f" {'NO se rechaza' if chi['acepta_h0'] else 'SE RECHAZA'} H0\n"
             "Daño simulado\n"
-            f" por granizada: {fmt(resumen['danio_medio_evento'] * 100, 1)} %\n"
-            f" medio anual:   {fmt(resumen['danio_medio_anual'] * 100, 1)} %\n"
-            f" anual c/malla: {fmt(resumen['danio_medio_anual_malla'] * 100, 1)} %\n"
-            f" años > {fmt(p.fca_umbral * 100, 0)} %:    {fmt(resumen['prob_danio_supera_umbral'] * 100, 1)} %\n\n"
-            "Ref. DACC Sur anual\n"
-            f" {fmt(dacc['con_lucha'] * 100, 1)} % a {fmt(dacc['sin_lucha'] * 100, 1)} %"
+            f" por granizada {fmt(resumen['danio_medio_evento'] * 100, 1)} %\n"
+            f" medio anual   {fmt(resumen['danio_medio_anual'] * 100, 1)} %\n"
+            f" anual c/malla {fmt(resumen['danio_medio_anual_malla'] * 100, 1)} %\n"
+            f" años > umbral {fmt(resumen['prob_danio_supera_umbral'] * 100, 1)} %\n"
+            f" años = umbral {fmt(resumen['prob_danio_igual_umbral'] * 100, 2)} %\n"
+            f" DACC Sur {fmt(dacc['con_lucha'] * 100, 1)}–{fmt(dacc['sin_lucha'] * 100, 1)} %\n"
+            f"Fondo (daño {p.fca_condicion} {fmt(p.fca_umbral * 100, 0)} %)\n"
+            f" P(cobrar) {fmt(eq['prob_cobrar'] * 100, 1)} %/año\n"
+            f" pago medio {fmt(eq['pago_medio_anual'] / 1e6)} M\n"
+            f" aporte     {fmt(eq['aporte_anual'] / 1e6)} M\n"
+            f" pagos/aportes {fmt(eq['pagos_sobre_aportes'])}"
         ))
 
         f = self.fig_clima
@@ -340,12 +364,14 @@ class App(tk.Tk):
         ax1.set_xticks(x)
         ax1.legend()
 
-        dv = np.array(p.danio_valores) * 100
-        ax2.bar(np.arange(len(dv)), p.danio_probabilidades, color=COLOR_SUPUESTO)
-        ax2.set_xticks(np.arange(len(dv)), [fmt(v, 0) for v in dv])
-        ax2.set_title("Daño por granizada (SUPUESTO)")
+        ev = res.eventos_danio * 100
+        if ev.size:
+            ax2.hist(ev, bins=np.arange(0, 102, 2), color=COLOR_SUPUESTO,
+                     weights=np.full(ev.size, 100 / ev.size))
+        ax2.set_yscale("log")
+        ax2.set_title("Daño por granizada simulado (SUPUESTO)")
         ax2.set_xlabel("daño %")
-        ax2.set_ylabel("probabilidad")
+        ax2.set_ylabel("% de granizadas (escala log)")
 
         danio = res.danio.ravel() * 100
         ax3.hist(danio, bins=np.arange(0, 102, 5), color="#4f81bd",
@@ -370,7 +396,7 @@ class App(tk.Tk):
         cols = ("anio", "estado", "dias", "danio", "danio_m", "rend", "sin", "comp", "fondo", "malla")
         titulos = ("Año", "Estado", "Granizadas", "Daño %", "Daño malla %", "Rend. kg/ha",
                    "Sin protección", "Compensación", "Fondo Comp.", "Malla")
-        self.tv_corrida = ttk.Treeview(tab, columns=cols, show="headings", height=21)
+        self.tv_corrida = ttk.Treeview(tab, columns=cols, show="headings", height=22)
         for c, t in zip(cols, titulos):
             self.tv_corrida.heading(c, text=t)
             self.tv_corrida.column(c, width=105 if c in ("sin", "comp", "fondo", "malla", "danio_m") else 75,
@@ -385,16 +411,15 @@ class App(tk.Tk):
     def _dibujar_corrida(self, res, p, replica):
         r = replica - 1
         danio = res.danio[r]
-        comp = np.where(danio > p.fca_umbral,
-                        p.fca_compensacion_ha * p.hectareas * (danio if p.fca_modo == "proporcional" else 1), 0)
+        comp = res.compensacion[r]
         anu = {a: res.anuales[a][r] for a in ALTERNATIVAS}
         self.lbl_corrida.configure(text=(
             f"Réplica {replica} de {p.replicas} – semilla {p.semilla}. "
-            f"Filas en rojo: años con daño mayor al {fmt(p.fca_umbral * 100, 0)} % (granizo fuerte). "
+            f"Filas en rojo: años con daño {p.fca_condicion} {fmt(p.fca_umbral * 100, 0)} % (granizo fuerte, paga el Fondo). "
             "Montos en millones de pesos."))
         self.tv_corrida.delete(*self.tv_corrida.get_children())
         for t in range(p.anios):
-            fuerte = danio[t] > p.fca_umbral
+            fuerte = comp[t] > 0
             self.tv_corrida.insert("", tk.END, tags=("fuerte",) if fuerte else (), values=(
                 t + 1, "G" if res.estados[r, t] else "S", int(res.dias[r, t]),
                 fmt(danio[t] * 100, 1), fmt(res.danio_malla[r, t] * 100, 1),
@@ -405,12 +430,16 @@ class App(tk.Tk):
             "Total", "", int(res.dias[r].sum()), "", "", "",
             fmt(anu["sin_proteccion"].sum() / 1e6), fmt(comp.sum() / 1e6),
             fmt(anu["fondo"].sum() / 1e6), fmt(anu["malla"].sum() / 1e6)))
+        self.tv_corrida.insert("", tk.END, tags=("total",), values=(
+            f"VAN {fmt(p.tasa_descuento * 100, 1)} %", "", "", "", "", "",
+            fmt(res.van["sin_proteccion"][r] / 1e6), "",
+            fmt(res.van["fondo"][r] / 1e6), fmt(res.van["malla"][r] / 1e6)))
 
         f = self.fig_corrida
         f.clear()
         ax = f.add_subplot(111)
         anios = np.arange(1, p.anios + 1)
-        for t in np.where(danio > p.fca_umbral)[0]:
+        for t in np.where(comp > 0)[0]:
             ax.axvspan(t + 0.5, t + 1.5, color="#f8d7d3", zorder=0)
         for a in ALTERNATIVAS:
             ax.plot(anios, np.cumsum(anu[a]) / 1e6, marker="o", ms=4, color=COLORES[a], label=NOMBRES[a])
@@ -431,7 +460,7 @@ class App(tk.Tk):
         self.canvas_mc = FigureCanvasTkAgg(self.fig_mc, master=tab)
         self.canvas_mc.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         cols = ("ind",) + ALTERNATIVAS
-        self.tv_mc = ttk.Treeview(tab, columns=cols, show="headings", height=9)
+        self.tv_mc = ttk.Treeview(tab, columns=cols, show="headings", height=10)
         self.tv_mc.heading("ind", text="Indicador")
         self.tv_mc.column("ind", width=330, anchor="w")
         for a in ALTERNATIVAS:
@@ -442,14 +471,16 @@ class App(tk.Tk):
 
     def _dibujar_montecarlo(self, res, p):
         ind = mc.indicadores(res)
+        tasa = fmt(p.tasa_descuento * 100, 1)
         filas = [
-            (f"Ganancia media en {p.anios} años", "media", fmt_m, max),
-            ("Desvío estándar", "desvio", fmt_m, min),
-            ("Percentil 5 (P5) – escenario malo", "p5", fmt_m, max),
-            ("Percentil 95 (P95)", "p95", fmt_m, None),
-            ("Ganancia media por año", "media_anual", fmt_m, max),
+            (f"VAN medio ({tasa} %) – indicador principal", "van_media", fmt_m, max),
+            ("VAN – desvío estándar", "van_desvio", fmt_m, min),
+            ("VAN – percentil 5 (P5)", "van_p5", fmt_m, max),
+            ("VAN – percentil 95 (P95)", "van_p95", fmt_m, None),
+            ("% de réplicas con VAN negativo", "pct_van_negativo", lambda v: f"{fmt(v, 2)} %", min),
+            (f"Suma sin descontar {p.anios} años – media", "media", fmt_m, max),
+            ("Suma sin descontar – P5", "p5", fmt_m, max),
             ("% de años con pérdida", "pct_anios_perdida", lambda v: f"{fmt(v, 1)} %", min),
-            (f"% de réplicas con pérdida en {p.anios} años", "pct_replicas_perdida", lambda v: f"{fmt(v, 2)} %", min),
             ("Peor año (mínimo de todas las réplicas)", "peor_anio", fmt_m, max),
         ]
         self.tv_mc.delete(*self.tv_mc.get_children())
@@ -464,19 +495,124 @@ class App(tk.Tk):
         f = self.fig_mc
         f.clear()
         ejes = f.subplots(1, 3, sharex=True, sharey=True)
-        todos = np.concatenate([res.totales[a] for a in ALTERNATIVAS]) / 1e6
+        todos = np.concatenate([res.van[a] for a in ALTERNATIVAS]) / 1e6
         bins = np.linspace(todos.min(), todos.max(), 60)
         for ax, a in zip(ejes, ALTERNATIVAS):
-            tot = res.totales[a] / 1e6
-            ax.hist(tot, bins=bins, color=COLORES[a], alpha=0.85)
-            ax.axvline(ind[a]["media"] / 1e6, color="black", ls="--", label=f"Media {fmt(ind[a]['media'] / 1e6, 1)}")
-            ax.axvline(ind[a]["p5"] / 1e6, color="black", ls=":", label=f"P5 {fmt(ind[a]['p5'] / 1e6, 1)}")
+            v = res.van[a] / 1e6
+            ax.hist(v, bins=bins, color=COLORES[a], alpha=0.85)
+            ax.axvline(ind[a]["van_media"] / 1e6, color="black", ls="--",
+                       label=f"Media {fmt(ind[a]['van_media'] / 1e6, 1)}")
+            ax.axvline(ind[a]["van_p5"] / 1e6, color="black", ls=":", label=f"P5 {fmt(ind[a]['van_p5'] / 1e6, 1)}")
             ax.axvline(0, color="#999999", lw=0.8)
             ax.set_title(NOMBRES[a])
-            ax.set_xlabel(f"ganancia total {p.anios} años (millones $)")
+            ax.set_xlabel(f"VAN {p.anios} años al {tasa} % (millones $)")
             ax.legend(fontsize=8)
         ejes[0].set_ylabel(f"réplicas (de {p.replicas})")
         self.canvas_mc.draw()
+
+    # --------------------------------------------------------------- pestaña 4
+    def _pestania_decision(self):
+        tab = ttk.Frame(self.pestanias)
+        self.pestanias.add(tab, text="  4 · Decisión  ")
+        self.lbl_decision = ttk.Label(tab, justify="left")
+        self.lbl_decision.pack(anchor="w", padx=8, pady=(6, 0))
+        self.fig_dec = Figure(figsize=(10, 5.4), constrained_layout=True)
+        self.canvas_dec = FigureCanvasTkAgg(self.fig_dec, master=tab)
+        self.canvas_dec.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        cols = ("ind",) + tuple(f"{a}_{k}" for a in ALTERNATIVAS for k in ("markov", "indep"))
+        self.tv_pers = ttk.Treeview(tab, columns=cols, show="headings", height=7)
+        self.tv_pers.heading("ind", text="Persistencia: Markov real vs años independientes")
+        self.tv_pers.column("ind", width=290, anchor="w")
+        for a in ALTERNATIVAS:
+            for k, t in (("markov", "Markov"), ("indep", "Indep.")):
+                self.tv_pers.heading(f"{a}_{k}", text=f"{NOMBRES[a].split()[0]} – {t}")
+                self.tv_pers.column(f"{a}_{k}", width=110, anchor="e")
+        self.tv_pers.pack(fill=tk.X, padx=6, pady=(0, 6))
+
+    def _dibujar_decision(self, res, p):
+        ind = mc.indicadores(res)
+        precios = np.arange(p.sens_precio_min, p.sens_precio_max + p.sens_precio_paso / 2, p.sens_precio_paso)
+        barrido = sens.barrido_precio(res, precios)
+        hectareas = np.arange(1, p.sens_ha_max + 1)
+        mults = np.arange(p.sens_frec_min, p.sens_frec_max + p.sens_frec_paso / 2, p.sens_frec_paso)
+        mapa = sens.mapa_mejor(p, hectareas, mults)
+        pers = sens.persistencia(p, res)
+
+        mejor_base = sens.elegir_mejor(ind, p.criterio_p5_minimo)
+        texto_mejor = NOMBRES[ALTERNATIVAS[mejor_base]] if mejor_base != sens.NINGUNA else "ninguna"
+        self.lbl_decision.configure(text=(
+            f"Criterio de mejor alternativa: mayor VAN medio entre las que tienen P5 del VAN > "
+            f"{fmt_m(p.criterio_p5_minimo)}. Con los parámetros actuales: {texto_mejor}.   "
+            f"Mapa: {p.sens_replicas} réplicas por punto, misma semilla."))
+
+        f = self.fig_dec
+        f.clear()
+        (ax1, ax2), (ax3, ax4) = f.subplots(2, 2)
+        for a in ALTERNATIVAS:
+            ax1.scatter(ind[a]["van_p5"] / 1e6, ind[a]["van_media"] / 1e6, s=80, color=COLORES[a], label=NOMBRES[a])
+        ax1.axvline(p.criterio_p5_minimo / 1e6, color="#999999", ls=":")
+        ax1.set_xlabel("P5 del VAN (millones $) → menos riesgo")
+        ax1.set_ylabel("VAN medio (millones $)")
+        ax1.set_title("Rentabilidad vs riesgo")
+        ax1.legend(fontsize=8)
+        ax1.grid(alpha=0.3)
+
+        for a in ALTERNATIVAS:
+            d = barrido["por_alternativa"][a]
+            ax2.plot(precios, np.array(d["van_media"]) / 1e6, color=COLORES[a], marker="o", ms=3, label=f"{NOMBRES[a]} media")
+            ax2.plot(precios, np.array(d["van_p5"]) / 1e6, color=COLORES[a], ls=":", label=f"{NOMBRES[a]} P5")
+        ax2.axhline(0, color="black", lw=0.8)
+        ax2.axvline(p.precio_uva, color="#999999", ls="--")
+        ax2.set_xlabel("precio de la uva ($/kg)")
+        ax2.set_ylabel("VAN (millones $)")
+        ax2.set_title("Sensibilidad al precio de la uva")
+        ax2.legend(fontsize=7, ncol=2)
+        ax2.grid(alpha=0.3)
+
+        from matplotlib.colors import ListedColormap
+        cmap = ListedColormap(["#d9d9d9"] + [COLORES[a] for a in ALTERNATIVAS])
+        ax3.imshow(mapa["mejor"] + 1, cmap=cmap, vmin=0, vmax=3, aspect="auto", origin="lower",
+                   extent=(hectareas[0] - 0.5, hectareas[-1] + 0.5,
+                           mults[0] - p.sens_frec_paso / 2, mults[-1] + p.sens_frec_paso / 2))
+        ax3.axvline(p.hectareas, color="black", ls="--", lw=0.8)
+        ax3.axhline(p.frecuencia_mult, color="black", ls="--", lw=0.8)
+        ax3.set_xlabel("hectáreas")
+        ax3.set_ylabel("multiplicador de granizadas")
+        ax3.set_title("Mejor alternativa (gris: ninguna cumple el criterio)")
+        from matplotlib.patches import Patch
+        ax3.legend(handles=[Patch(color=COLORES[a], label=NOMBRES[a]) for a in ALTERNATIVAS]
+                   + [Patch(color="#d9d9d9", label="Ninguna")], fontsize=7, loc="upper right")
+
+        x = np.arange(len(ALTERNATIVAS))
+        for k, (nombre, desplaz, rel) in enumerate((("markov", -0.2, "Markov real"), ("independiente", 0.2, "Independientes"))):
+            ii = pers[nombre]["indicadores"]
+            ax4.bar(x + desplaz, [ii[a]["van_media"] / 1e6 for a in ALTERNATIVAS], 0.4,
+                    color=["#bfbfbf", "#7f7f7f"][k], label=f"{rel} – media")
+            ax4.scatter(x + desplaz, [ii[a]["van_p5"] / 1e6 for a in ALTERNATIVAS], color="black",
+                        marker=["v", "^"][k], zorder=3, label=f"{rel} – P5")
+        ax4.set_xticks(x, [NOMBRES[a] for a in ALTERNATIVAS])
+        ax4.set_ylabel("VAN (millones $)")
+        ax4.set_title(f"Persistencia: Markov vs años independientes (G = {fmt(pers['pi_G'], 3)})")
+        ax4.legend(fontsize=7)
+        ax4.grid(alpha=0.3, axis="y")
+        self.canvas_dec.draw()
+
+        self.tv_pers.delete(*self.tv_pers.get_children())
+        filas = [("VAN medio", "van_media", fmt_m), ("VAN P5", "van_p5", fmt_m),
+                 ("VAN desvío", "van_desvio", fmt_m),
+                 ("% años con pérdida", "pct_anios_perdida", lambda v: f"{fmt(v, 1)} %")]
+        for titulo, clave, ff in filas:
+            celdas = []
+            for a in ALTERNATIVAS:
+                for nombre in ("markov", "independiente"):
+                    celdas.append(ff(pers[nombre]["indicadores"][a][clave]))
+            self.tv_pers.insert("", tk.END, values=(titulo, *celdas))
+        m, i = pers["markov"], pers["independiente"]
+        racha = (fmt(m["racha_G_media"], 1), fmt(i["racha_G_media"], 1)) * len(ALTERNATIVAS)
+        dos = (f"{fmt(m['prob_2_fuertes_seguidos'] * 100, 1)} %",
+               f"{fmt(i['prob_2_fuertes_seguidos'] * 100, 1)} %") * len(ALTERNATIVAS)
+        self.tv_pers.insert("", tk.END, values=("Racha máx. media de años G (clima)", *racha))
+        self.tv_pers.insert("", tk.END, values=("P(2+ años fuertes seguidos) (clima)", *dos))
 
     # ---------------------------------------------------------------- calcular
     def calcular(self):
@@ -494,6 +630,9 @@ class App(tk.Tk):
             self._dibujar_clima(res, p)
             self._dibujar_corrida(res, p, replica)
             self._dibujar_montecarlo(res, p)
+            self.estado.set("Calculando sensibilidad…")
+            self.update_idletasks()
+            self._dibujar_decision(res, p)
             self.estado.set(
                 f"Listo: {fmt(p.replicas, 0)} réplicas × {p.anios} años, semilla {p.semilla}, "
                 f"{fmt(res.numeros_usados, 0)} números aleatorios usados.")

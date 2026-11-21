@@ -64,7 +64,9 @@ RENDIMIENTO_MAX_KG_HA = 7600   # 76 qq/ha
 # ---------------------------------------------------------------------------
 FCA_APORTE_POR_HA = 51_000           # $/ha/año
 FCA_COMPENSACION_POR_HA = 2_000_000  # $/ha con daño total
-FCA_UMBRAL_DANIO = 0.50              # paga solo si el daño del año SUPERA el 50 %
+FCA_UMBRAL_DANIO = 0.50              # umbral de daño del año para cobrar
+# Si el umbral se cumple con ">=" o con ">" es un SUPUESTO: las fuentes se
+# contradicen (ver FCA_CONDICION_PAGO en supuestos.py).
 FCA_MAX_HECTAREAS = 30
 
 # ---------------------------------------------------------------------------
