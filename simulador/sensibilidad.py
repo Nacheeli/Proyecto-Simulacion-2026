@@ -39,6 +39,30 @@ def elegir_mejor(ind, p5_minimo=0.0):
     return max(candidatas, key=lambda k: ind[ALTERNATIVAS[k]]["van_media"])
 
 
+def es_caso_limite(ind, mejor, p5_minimo=0.0, tolerancia=0.02):
+    """True si la elección de la celda depende de un P5 pegado al criterio.
+
+    "Pegado" = a menos de max(tolerancia × |VAN medio|, semiancho del IC 95 % del
+    P5) del criterio. Se marca si (a) la mejor alternativa tiene un P5 pegado al
+    criterio, o (b) una alternativa disponible con MAYOR VAN medio quedó afuera
+    por un P5 pegado al criterio. En los dos casos, con otra semilla u otra
+    cantidad de réplicas la celda puede cambiar de color.
+    """
+    def cerca(a):
+        banda = max(tolerancia * abs(ind[a]["van_media"]), ind[a].get("van_p5_semiancho", 0.0))
+        return abs(ind[a]["van_p5"] - p5_minimo) < banda
+
+    media_mejor = ind[ALTERNATIVAS[mejor]]["van_media"] if mejor != NINGUNA else -np.inf
+    for k, a in enumerate(ALTERNATIVAS):
+        if not ind[a].get("disponible", True):
+            continue
+        if k == mejor and cerca(a):
+            return True
+        if k != mejor and ind[a]["van_media"] > media_mejor and cerca(a):
+            return True
+    return False
+
+
 def barrido_precio(res, precios):
     """VAN medio y P5 de cada alternativa según el precio de la uva.
 
@@ -76,6 +100,8 @@ def analisis_severidad(p, factores, precios, hectareas, replicas=None):
         "van_p5": {a: np.zeros(nf) for a in ALTERNATIVAS},
         "mapa_precio": np.full((nf, len(precios)), NINGUNA),
         "mapa_ha": np.full((nf, len(hectareas)), NINGUNA),
+        "limite_precio": np.zeros((nf, len(precios)), dtype=bool),
+        "limite_ha": np.zeros((nf, len(hectareas)), dtype=bool),
         "dacc": dacc, "replicas": replicas,
     }
     for i, f in enumerate(factores):
@@ -94,9 +120,11 @@ def analisis_severidad(p, factores, precios, hectareas, replicas=None):
         for j, precio in enumerate(precios):
             ij = mc.indicadores(mc.evaluar_escenarios(esc, replace(pf, precio_uva=float(precio))))
             salida["mapa_precio"][i, j] = elegir_mejor(ij, p.criterio_p5_minimo)
+            salida["limite_precio"][i, j] = es_caso_limite(ij, salida["mapa_precio"][i, j], p.criterio_p5_minimo)
         for j, ha in enumerate(hectareas):
             ij = mc.indicadores(mc.evaluar_escenarios(esc, replace(pf, hectareas=float(ha))))
             salida["mapa_ha"][i, j] = elegir_mejor(ij, p.criterio_p5_minimo)
+            salida["limite_ha"][i, j] = es_caso_limite(ij, salida["mapa_ha"][i, j], p.criterio_p5_minimo)
     return salida
 
 

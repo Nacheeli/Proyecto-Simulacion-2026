@@ -2,6 +2,7 @@
 Pruebas del modelo (sin abrir la ventana).  Ejecutar:  python -m pytest
 """
 
+import os
 from dataclasses import replace
 
 import numpy as np
@@ -389,3 +390,43 @@ def test_cruce_de_severidad_con_su_ic():
     c = est.cruce_severidad(filas)
     assert c["inferior"] < c["estimado"] < c["superior"]
     assert 0.2 < c["estimado"] < 0.4
+
+
+# ------------------------------------------------------- fase visual (v5)
+def test_chi_cuadrado_de_tabla():
+    from simulador.generador import valor_critico_chi2, origen_critico_chi2, critico_wilson_hilferty
+    assert valor_critico_chi2(9, 0.05) == 16.919
+    assert origen_critico_chi2(9) == "tabla"
+    assert origen_critico_chi2(40) == "Wilson–Hilferty"
+    assert valor_critico_chi2(40) == pytest.approx(critico_wilson_hilferty(40))
+
+
+def test_caso_limite():
+    ind = {"sin_proteccion": {"van_media": 23.4e6, "van_p5": 0.08e6, "van_p5_semiancho": 0.6e6},
+           "fondo": {"van_media": 0, "van_p5": 0, "disponible": False},
+           "malla": {"van_media": 6.9e6, "van_p5": 3.8e6, "van_p5_semiancho": 0.1e6}}
+    assert sens.es_caso_limite(ind, 0)            # la mejor tiene P5 pegado al criterio
+    ind["sin_proteccion"]["van_p5"] = -0.3e6      # queda afuera, pero por poco: la malla es "límite"
+    assert sens.es_caso_limite(ind, 2)
+    ind["sin_proteccion"]["van_p5"] = -5e6        # lejos del criterio: no es límite
+    assert not sens.es_caso_limite(ind, 2)
+
+
+def test_la_interfaz_calcula_y_exporta_sin_cambiar_resultados(tmp_path):
+    import matplotlib
+    matplotlib.use("Agg")
+    from interfaz import calculos, graficos
+    p = Parametros(replicas=300, sens_replicas=200, conv_replicas_max=1000)
+    R = calculos.calcular_todo(p)
+    directo = mc.indicadores(mc.correr(Parametros(replicas=300)))
+    assert R["ind"]["fondo"]["van_media"] == directo["fondo"]["van_media"]
+    rutas = graficos.exportar(R, str(tmp_path), dpi=60)
+    assert len(rutas) == len(graficos.GRAFICOS)
+    assert all(os.path.getsize(r) > 1000 for r in rutas)
+
+
+def test_paleta_unica():
+    from interfaz import estilo as E
+    colores = {E.ALTERNATIVAS_ESTILO[a]["color"] for a in ("sin_proteccion", "fondo", "malla")}
+    assert colores == {"#D55E00", "#0072B2", "#009E73"}
+    assert E.ACENTO not in colores

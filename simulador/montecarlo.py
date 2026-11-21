@@ -109,6 +109,20 @@ def correr(p, tabla_dias_real=None):
     return evaluar_escenarios(generar_escenarios(p, tabla_dias_real), p)
 
 
+def semiancho_percentil(x, q, z=1.96):
+    """Semiancho aproximado del IC 95 % de un percentil, por estadísticos de orden:
+    los rangos n·q ± z·√(n·q·(1−q)) de la muestra ordenada."""
+    x = np.sort(np.asarray(x, dtype=float))
+    n = x.size
+    if n < 2:
+        return 0.0
+    centro = n * q
+    d = z * np.sqrt(n * q * (1 - q))
+    lo = int(max(0, np.floor(centro - d)))
+    hi = int(min(n - 1, np.ceil(centro + d)))
+    return float((x[hi] - x[lo]) / 2)
+
+
 def indicadores(res):
     """Tabla de indicadores: alternativa -> dict."""
     salida = {}
@@ -121,6 +135,7 @@ def indicadores(res):
             "van_desvio": float(v.std(ddof=1)) if v.size > 1 else 0.0,
             "van_p5": float(np.percentile(v, 5)),
             "van_p95": float(np.percentile(v, 95)),
+            "van_p5_semiancho": semiancho_percentil(v, 0.05),
             "pct_van_negativo": float((v < 0).mean() * 100),
             "media": float(tot.mean()),
             "desvio": float(tot.std(ddof=1)) if tot.size > 1 else 0.0,

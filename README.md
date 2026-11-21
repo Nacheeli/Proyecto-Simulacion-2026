@@ -14,7 +14,7 @@ esperado y por riesgo:
 
 ```bash
 pip install -r requirements.txt
-python app.py          # interfaz gráfica
+python app.py          # interfaz gráfica (botón «Exportar gráficos» → figuras/*.png)
 python verificar.py    # reporte de verificación por consola
 python -m pytest       # pruebas automáticas
 ```
@@ -24,7 +24,13 @@ Requiere Python 3.10 o posterior (tkinter viene incluido en el instalador de Win
 ## Estructura
 
 ```
-app.py                  Interfaz (tkinter + matplotlib): panel de datos + 5 pestañas
+app.py                  Ventana principal: panel de datos + 5 pestañas
+interfaz/               Presentación (no cambia resultados)
+  estilo.py             Paleta, tipografía, tema ttk y matplotlib (único lugar con colores)
+  widgets.py            Tarjetas, indicadores, figuras adaptables, grupos plegables, pestañas, tablas
+  calculos.py           Corrida completa de la app sin Tk (lo que muestran las 5 pestañas)
+  graficos.py           Gráficos: los mismos para la app y para exportar los PNG del informe
+figuras/                PNG exportados (200 dpi, 16 cm de ancho, fondo blanco)
 verificar.py            Reporte de verificación para el informe
 data/
   granizo_san_rafael_aero_1974_2024.csv   Serie real de días con granizo
@@ -137,3 +143,44 @@ cultivadas) da 8,3 % a 18,3 %.
 la finca aporta (P(cobrar) ≈ 10 % por año). Ese cociente depende de la cola de la tabla de daño (años con
 daño ≥ 50 %). El factor de severidad lo barre: el Fondo deja de ser la mejor alternativa con un factor de
 ≈ 0,28, justo donde pagos/aportes ≈ 1, en el borde inferior del rango creíble según la DACC.
+
+## Estilo de la interfaz
+
+Todos los colores están definidos una sola vez en `interfaz/estilo.py`.
+
+**Interfaz**
+
+| Uso | Color |
+|---|---|
+| Fondo general | `#F3F4F6` |
+| Tarjetas, tablas y gráficos | `#FFFFFF`, borde de 1 px `#E5E7EB` |
+| Texto principal / secundario | `#374151` / `#6B7280` |
+| Acento (botón Calcular, pestaña activa, títulos de grupo) | bordó vino `#7B2D3B` (hover `#5E2230`) |
+
+**Datos**
+
+| Elemento | Color | Línea | Marcador | Rayado |
+|---|---|---|---|---|
+| Sin protección | `#D55E00` bermellón | continua | círculo | `///` |
+| Fondo Compensador | `#0072B2` azul | rayada | cuadrado | liso |
+| Malla antigranizo | `#009E73` verde azulado | punteada | triángulo | `...` |
+| Datos reales / simulado | `#374151` / `#9CA3AF` | | | |
+| Años de granizo fuerte, «ninguna» en los mapas | `#E5E7EB` | | | |
+| Supuestos (S) y rango creíble DACC | texto `#B45309`, bandas `#FDF3D8` | | | |
+| Marca de dato real (R) | `#9CA3AF` | | | |
+
+**Reglas**
+
+- Cada alternativa tiene siempre el mismo color, tipo de línea, marcador y rayado en todos los gráficos, mapas, tablas y leyendas. Los tres colores son de la paleta Okabe–Ito, pensada para que se distingan con daltonismo. Se revisaron con simulación de deuteranopía y en escala de grises.
+- El bordó es solo de la interfaz: nunca aparece dentro de un gráfico. Los títulos de los gráficos van en `#374151`.
+- Ningún dato depende solo del color: con líneas, marcadores y rayados, los gráficos se leen impresos en blanco y negro.
+- Las estrellas de «mejor» en las tablas van en el color del texto.
+- En el mapa hectáreas × severidad, una celda se marca como **caso límite** (rayado cruzado) cuando el P5 del VAN de la mejor alternativa, o de una con mayor VAN medio que quedó afuera, está a menos de max(2 % del VAN medio; semiancho del IC 95 % del P5) del criterio. Esas celdas pueden cambiar con la semilla o con la cantidad de réplicas.
+
+**Otros detalles**
+
+- La ventana arranca maximizada y en modo DPI-aware en Windows, para verse nítida con escalado de 125–150 %.
+- Los gráficos se redimensionan al tamaño real de su tarjeta.
+- Tipografía Segoe UI 10, con alternativas si no está instalada.
+- Mientras corre «Calcular», la barra de estado muestra el paso en curso y el botón queda deshabilitado.
+- El valor crítico de χ² sale de la tabla (gl 1–30). Fuera de esa tabla se usa la aproximación de Wilson–Hilferty, y la app lo aclara.
