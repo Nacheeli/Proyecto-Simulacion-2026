@@ -74,6 +74,7 @@ class Parametros:
     sens_sev_max: float = 3.0
     sens_sev_paso: float = 0.25
     sens_ha_max: int = 60
+    conv_replicas_max: int = 50_000   # convergencia (pestaña 5)
     criterio_p5_minimo: float = 0.0   # "mejor" = mayor VAN medio con P5 del VAN > este valor
 
     def validar(self):

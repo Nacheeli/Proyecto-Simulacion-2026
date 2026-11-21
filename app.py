@@ -22,6 +22,7 @@ from simulador.finca import ALTERNATIVAS, NOMBRES
 from simulador.generador import GeneradorLCG, prueba_chi_cuadrado
 from simulador import montecarlo as mc
 from simulador import sensibilidad as sens
+from simulador import estadistica as est
 
 COLORES = {"sin_proteccion": "#c0504d", "fondo": "#4f81bd", "malla": "#5a9e3a"}
 COLOR_REAL = "#7f7f7f"
@@ -114,6 +115,7 @@ GRUPOS = [
         ("sens_sev_max", "Severidad hasta", "", 1, float),
         ("sens_sev_paso", "Severidad paso", "", 1, float),
         ("sens_ha_max", "Hectáreas hasta (mapa)", "", 1, int),
+        ("conv_replicas_max", "Réplicas máx. convergencia", "", 1, int),
         ("criterio_p5_minimo", "Criterio: P5 del VAN > ($)", "", 1, float),
     ]),
 ]
@@ -145,6 +147,7 @@ class App(tk.Tk):
         self._pestania_corrida()
         self._pestania_montecarlo()
         self._pestania_decision()
+        self._pestania_precision()
 
         self.estado = tk.StringVar(value="Listo. Presioná «Calcular».")
         ttk.Label(self, textvariable=self.estado, anchor="w", relief="sunken").pack(fill=tk.X)
@@ -463,7 +466,7 @@ class App(tk.Tk):
         self.canvas_mc = FigureCanvasTkAgg(self.fig_mc, master=tab)
         self.canvas_mc.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         cols = ("ind",) + ALTERNATIVAS
-        self.tv_mc = ttk.Treeview(tab, columns=cols, show="headings", height=11)
+        self.tv_mc = ttk.Treeview(tab, columns=cols, show="headings", height=12)
         self.tv_mc.heading("ind", text="Indicador")
         self.tv_mc.column("ind", width=330, anchor="w")
         for a in ALTERNATIVAS:
@@ -477,6 +480,7 @@ class App(tk.Tk):
         tasa = fmt(p.tasa_descuento * 100, 1)
         filas = [
             (f"VAN medio ({tasa} %) – indicador principal", "van_media", fmt_m, max),
+            ("IC 95 % del VAN medio (±)", "van_ic", lambda v: f"± {fmt(v / 1e6, 3)} M", None),
             ("VAN – desvío estándar", "van_desvio", fmt_m, min),
             ("VAN – percentil 5 (P5)", "van_p5", fmt_m, max),
             ("VAN – percentil 95 (P95)", "van_p95", fmt_m, None),
@@ -487,6 +491,8 @@ class App(tk.Tk):
             ("Percentil 1 de los resultados anuales", "p1_anual", fmt_m, max),
             ("Peor año (mínimo de todas las réplicas)", "peor_anio", fmt_m, max),
         ]
+        for a, ic in est.ic_van(res).items():
+            ind[a]["van_ic"] = ic["semiancho"]
         self.tv_mc.delete(*self.tv_mc.get_children())
         for titulo, clave, f_fmt, mejor in filas:
             valores = [ind[a][clave] for a in ALTERNATIVAS]
@@ -668,6 +674,102 @@ class App(tk.Tk):
         self.tv_pers.insert("", tk.END, values=("Racha máx. media de años G (clima)", *racha))
         self.tv_pers.insert("", tk.END, values=("P(2+ años fuertes seguidos) (clima)", *dos))
 
+    # --------------------------------------------------------------- pestaña 5
+    def _pestania_precision(self):
+        tab = ttk.Frame(self.pestanias)
+        self.pestanias.add(tab, text="  5 · Precisión  ")
+        self.lbl_precision = ttk.Label(tab, justify="left", wraplength=940)
+        self.lbl_precision.pack(anchor="w", padx=8, pady=(6, 0))
+        self.fig_prec = Figure(figsize=(11, 3.2), constrained_layout=True)
+        self.canvas_prec = FigureCanvasTkAgg(self.fig_prec, master=tab)
+        self.canvas_prec.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        abajo = ttk.Frame(tab)
+        abajo.pack(fill=tk.X, padx=6, pady=(0, 6))
+        cols = ("par", "dif", "nac", "ind", "red", "rho")
+        self.tv_dif = ttk.Treeview(abajo, columns=cols, show="headings", height=3)
+        for c, t, w in zip(cols, ("Diferencia de VAN medio", "Estimación", "IC 95 % con NAC",
+                                  "IC 95 % independientes", "Más angosto", "Correlación"),
+                           (200, 90, 150, 150, 90, 85)):
+            self.tv_dif.heading(c, text=t)
+            self.tv_dif.column(c, width=w, anchor="e" if c != "par" else "w")
+        self.tv_dif.pack(side=tk.TOP, fill=tk.X, expand=True, pady=(0, 4))
+        cols = ("tasa", "fpk", "fusd", "spk", "susd")
+        self.tv_corte = ttk.Treeview(abajo, columns=cols, show="headings", height=4)
+        for c, t, w in zip(cols, ("Tasa", "Malla = Fondo $/kg", "USD/kg",
+                                  "Malla = Sin $/kg", "USD/kg"), (90, 125, 70, 115, 70)):
+            self.tv_corte.heading(c, text=t)
+            self.tv_corte.column(c, width=w, anchor="e")
+        self.tv_corte.pack(side=tk.TOP, fill=tk.X, expand=True)
+
+    def _dibujar_precision(self, res, p):
+        n = p.replicas
+        tamanios = sorted({t for t in (100, 500, 1000, 5000, 10_000, p.conv_replicas_max) if t <= p.conv_replicas_max})
+        conv = est.convergencia(p, tamanios)
+        dif = est.ic_diferencias(res, est.corrida_independiente(p))
+        factores = np.round(np.arange(0.25, 0.3501, 0.025), 4)
+        filas_sev = est.ic_corte_severidad(p, factores)
+        cruce = est.cruce_severidad(filas_sev)
+        cortes_tasa = est.cortes_por_tasa(res.esc, p, (0.03, 0.05, 0.08))
+        tc_doble = est.corte_escalando_tipo_de_cambio(res.esc, p, 2.0)
+        normal = est.cortes_malla(res.esc, p)
+
+        def num(x, d=3):
+            return fmt(x, d) if x is not None else "–"
+
+        self.lbl_precision.configure(text=(
+            f"IC 95 % = media ± 1,96·s/√n, con n = {fmt(n, 0)} réplicas. NAC = números aleatorios comunes "
+            f"(las tres alternativas sobre los mismos escenarios); 'independientes' toma la segunda alternativa "
+            f"de una corrida con semilla {p.semilla + 1}.\n"
+            f"Corte de severidad (VAN Fondo = VAN Sin): ×{num(cruce['estimado'])}  "
+            f"(IC 95 % ×{num(cruce['inferior'])} a ×{num(cruce['superior'])}).   "
+            f"Corte de la malla en USD/kg con el tipo de cambio ×2: contra Sin "
+            f"{num(normal['sin_proteccion']['usd_kg'])} → {num(tc_doble['sin_proteccion']['usd_kg'])} (no cambia); "
+            f"contra el Fondo {num(normal['fondo']['usd_kg'])} → {num(tc_doble['fondo']['usd_kg'])} "
+            f"(cambia: el Fondo está fijo en pesos)."))
+
+        f = self.fig_prec
+        f.clear()
+        ejes = f.subplots(1, 4)
+        for ax, a in zip(ejes[:3], ALTERNATIVAS):
+            m = conv[a]["media"] / 1e6
+            s = conv[a]["semiancho"] / 1e6
+            ax.fill_between(conv["tamanios"], m - s, m + s, color=COLORES[a], alpha=0.2)
+            ax.plot(conv["tamanios"], m, color=COLORES[a], marker="o", ms=3)
+            ax.axhline(m[-1], color="#999999", lw=0.8, ls=":")
+            ax.axvline(n, color="black", ls="--", lw=0.8)
+            ax.set_xscale("log")
+            ax.set_title(f"Convergencia – {NOMBRES[a]}", fontsize=9)
+            ax.set_xlabel("réplicas")
+            ax.grid(alpha=0.3)
+        ejes[0].set_ylabel("VAN medio ± IC 95 % (M$)")
+        ax = ejes[3]
+        x = [r["factor"] for r in filas_sev]
+        med = np.array([r["media"] for r in filas_sev]) / 1e6
+        semi = np.array([r["semiancho"] for r in filas_sev]) / 1e6
+        ax.fill_between(x, med - semi, med + semi, color="#7f7f7f", alpha=0.3)
+        ax.plot(x, med, color="black", marker="o", ms=3)
+        ax.axhline(0, color="black", lw=0.8)
+        if cruce["estimado"] is not None:
+            ax.axvline(cruce["estimado"], color="red", lw=1)
+        ax.set_title("VAN Fondo − Sin según severidad (NAC)", fontsize=9)
+        ax.set_xlabel("factor de severidad")
+        ax.set_ylabel("diferencia ± IC 95 % (M$)")
+        ax.grid(alpha=0.3)
+        self.canvas_prec.draw()
+
+        self.tv_dif.delete(*self.tv_dif.get_children())
+        for (a, b), fila in dif.items():
+            nac, ind = fila["nac"], fila["independiente"]
+            self.tv_dif.insert("", tk.END, values=(
+                f"{NOMBRES[a]} − {NOMBRES[b]}", fmt_m(nac["media"]),
+                f"± {fmt(nac['semiancho'] / 1e6, 3)} M", f"± {fmt(ind['semiancho'] / 1e6, 3)} M",
+                f"{fmt(fila['reduccion'], 1)} veces", fmt(fila["correlacion"], 3)))
+        self.tv_corte.delete(*self.tv_corte.get_children())
+        for t, c in cortes_tasa.items():
+            self.tv_corte.insert("", tk.END, values=(
+                f"{fmt(t * 100, 0)} %", num(c["fondo"]["pesos_kg"], 0), num(c["fondo"]["usd_kg"], 3),
+                num(c["sin_proteccion"]["pesos_kg"], 0), num(c["sin_proteccion"]["usd_kg"], 3)))
+
     # ---------------------------------------------------------------- calcular
     def calcular(self):
         try:
@@ -687,6 +789,9 @@ class App(tk.Tk):
             self.estado.set("Calculando sensibilidad…")
             self.update_idletasks()
             self._dibujar_decision(res, p)
+            self.estado.set("Calculando precisión (convergencia e intervalos)…")
+            self.update_idletasks()
+            self._dibujar_precision(res, p)
             self.estado.set(
                 f"Listo: {fmt(p.replicas, 0)} réplicas × {p.anios} años, semilla {p.semilla}, "
                 f"{fmt(res.numeros_usados, 0)} números aleatorios usados.")

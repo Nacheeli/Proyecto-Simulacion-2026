@@ -24,7 +24,7 @@ Requiere Python 3.10 o posterior (tkinter viene incluido en el instalador de Win
 ## Estructura
 
 ```
-app.py                  Interfaz (tkinter + matplotlib): panel de datos + 4 pestañas
+app.py                  Interfaz (tkinter + matplotlib): panel de datos + 5 pestañas
 verificar.py            Reporte de verificación para el informe
 data/
   granizo_san_rafael_aero_1974_2024.csv   Serie real de días con granizo
@@ -38,6 +38,7 @@ simulador/              Lógica del modelo (importable, sin interfaz)
   finca.py              Módulo 5 – escenario de 20 años, resultado anual y VAN    (TP4)
   montecarlo.py         Módulo 6 – 10.000 réplicas e indicadores                  (TP7)
   sensibilidad.py       Módulo 7 – precio, severidad, mapas, persistencia         (TP6)
+  estadistica.py        Módulo 8 – IC 95 %, números aleatorios comunes, convergencia, precio de corte (TP7)
 tests/test_modelo.py    Pruebas: casos a mano, frecuencias, VAN, semilla
 ```
 
@@ -95,6 +96,13 @@ creíble según la DACC marcado), mapa de la mejor alternativa según precio (20
 años independientes con la misma proporción de G).
 **Criterio de mejor:** el mayor VAN medio entre las alternativas cuyo P5 del VAN es mayor que 0
 (configurable).
+
+**Precisión (pestaña 5).** IC 95 % del VAN medio (media ± 1,96·s/√n); IC de las diferencias de VAN
+réplica a réplica con números aleatorios comunes contra corridas independientes (otra semilla);
+convergencia del VAN medio de 100 a 50.000 réplicas (prefijos de una misma corrida); IC del corte de
+severidad entre el Fondo y no protegerse; precio de corte de la malla en $/kg y USD/kg para tasas de
+3, 5 y 8 %. Como el VAN medio es lineal en el precio con los escenarios fijos, el precio de corte se
+calcula exacto.
 
 ## Datos reales y supuestos
 

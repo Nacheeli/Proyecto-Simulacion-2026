@@ -325,3 +325,67 @@ def test_severidad_uno_reproduce_la_corrida_base():
     a = sens.analisis_severidad(p, [1.0], [p.precio_uva], [p.hectareas], replicas=2000)
     base_chica = mc.indicadores(mc.correr(p))
     assert a["van_media"]["fondo"][0] == pytest.approx(base_chica["fondo"]["van_media"])
+
+
+# ------------------------------------------------------------ v4: precisión
+from simulador import estadistica as est
+
+
+def test_ic_media_formula():
+    x = np.array([1.0, 2.0, 3.0, 4.0])
+    ic = est.ic_media(x)
+    assert ic["semiancho"] == pytest.approx(1.959964 * x.std(ddof=1) / 2, rel=1e-6)
+    assert ic["inferior"] < ic["media"] < ic["superior"]
+
+
+def test_prefijo_de_la_corrida_es_la_corrida_chica(base):
+    chica = mc.correr(Parametros(replicas=500))
+    for a in ("sin_proteccion", "fondo", "malla"):
+        assert np.array_equal(chica.van[a], base.van[a][:500])
+
+
+def test_ic_se_angosta_como_uno_sobre_raiz_de_n(base):
+    for a in ("sin_proteccion", "fondo", "malla"):
+        s2500 = est.ic_media(base.van[a][:2500])["semiancho"]
+        s10000 = est.ic_media(base.van[a])["semiancho"]
+        assert s10000 / s2500 == pytest.approx(0.5, rel=0.1)
+
+
+def test_nac_angosta_el_ic_de_las_diferencias(base):
+    dif = est.ic_diferencias(base, est.corrida_independiente(base.parametros))
+    for par, fila in dif.items():
+        assert fila["nac"]["semiancho"] < fila["independiente"]["semiancho"], par
+        assert fila["correlacion"] > 0
+    assert dif[("fondo", "sin_proteccion")]["reduccion"] > 1.8
+
+
+def test_precio_de_corte_iguala_los_van(base):
+    p = base.parametros
+    corte = est.precio_corte(base.esc, p, "malla", "fondo")
+    van = mc.evaluar_escenarios(base.esc, replace(p, precio_uva=corte)).van
+    assert van["malla"].mean() == pytest.approx(van["fondo"].mean(), rel=1e-9, abs=1.0)
+    assert 750 < corte < 850
+
+
+def test_corte_en_dolares_y_tipo_de_cambio(base):
+    p = base.parametros
+    normal = est.cortes_malla(base.esc, p)
+    doble = est.corte_escalando_tipo_de_cambio(base.esc, p, 2.0)
+    # contra no protegerse, el corte en USD/kg no depende del tipo de cambio
+    assert doble["sin_proteccion"]["usd_kg"] == pytest.approx(normal["sin_proteccion"]["usd_kg"], rel=1e-9)
+    # contra el Fondo sí, porque el Fondo está fijo en pesos
+    assert doble["fondo"]["usd_kg"] != pytest.approx(normal["fondo"]["usd_kg"], rel=1e-3)
+
+
+def test_corte_sube_con_la_tasa_de_descuento(base):
+    cortes = est.cortes_por_tasa(base.esc, base.parametros, (0.03, 0.05, 0.08))
+    valores = [cortes[t]["fondo"]["pesos_kg"] for t in (0.03, 0.05, 0.08)]
+    assert valores[0] < valores[1] < valores[2]
+
+
+def test_cruce_de_severidad_con_su_ic():
+    p = Parametros(replicas=2000)
+    filas = est.ic_corte_severidad(p, [0.2, 0.25, 0.3, 0.35, 0.4], replicas=2000)
+    c = est.cruce_severidad(filas)
+    assert c["inferior"] < c["estimado"] < c["superior"]
+    assert 0.2 < c["estimado"] < 0.4

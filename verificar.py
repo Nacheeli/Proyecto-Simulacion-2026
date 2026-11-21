@@ -9,6 +9,7 @@ import numpy as np
 from simulador import datos_reales as R
 from simulador import montecarlo as mc
 from simulador import sensibilidad as sens
+from simulador import estadistica as est
 from simulador.clima import CadenaMarkov
 from simulador.danio import referencia_dacc
 from simulador.finca import ALTERNATIVAS, NOMBRES, compensacion_fondo, evaluar, van
@@ -152,6 +153,48 @@ def main():
         celdas = "".join(f"{pers['markov']['indicadores'][a][clave] / 1e6:10.2f} /{pers['independiente']['indicadores'][a][clave] / 1e6:7.2f} M"
                          for a in ALTERNATIVAS)
         print(f"   {titulo:26}{celdas}")
+
+    print(LINEA)
+    print("11. Precisión: intervalos de confianza del 95 % (media ± 1,96·s/√n)")
+    for a, ic in est.ic_van(res).items():
+        print(f"   {NOMBRES[a]:20} VAN medio {ic['media'] / 1e6:8.3f} M ± {ic['semiancho'] / 1e6:.3f} M "
+              f"[{ic['inferior'] / 1e6:.3f} ; {ic['superior'] / 1e6:.3f}]")
+    print("   Diferencias de VAN medio: números aleatorios comunes (NAC) vs corridas independientes "
+          f"(semilla {p.semilla + 1} para la segunda alternativa)")
+    dif = est.ic_diferencias(res, est.corrida_independiente(p))
+    for (a, b), fila in dif.items():
+        nac, ind_ = fila["nac"], fila["independiente"]
+        print(f"   {NOMBRES[a]:18} − {NOMBRES[b]:18} {nac['media'] / 1e6:7.3f} M  NAC ± {nac['semiancho'] / 1e6:.3f}  "
+              f"indep. ± {ind_['semiancho'] / 1e6:.3f}  → {fila['reduccion']:.1f} veces más angosto "
+              f"(varianza {fila['reduccion'] ** 2:.1f} veces menor), correlación {fila['correlacion']:.3f}")
+    print("   Convergencia (prefijos de una corrida de 50.000 réplicas):")
+    conv = est.convergencia(p, (100, 500, 1000, 5000, 10_000, 50_000))
+    print("   réplicas  " + "".join(f"{NOMBRES[a]:>26}" for a in ALTERNATIVAS))
+    for k, n in enumerate(conv["tamanios"]):
+        print(f"   {n:8d}  " + "".join(f"{conv[a]['media'][k] / 1e6:15.3f} ± {conv[a]['semiancho'][k] / 1e6:6.3f} M"
+                                       for a in ALTERNATIVAS))
+    for a in ALTERNATIVAS:
+        s = conv[a]["semiancho"]
+        print(f"   {NOMBRES[a]:20} semiancho 10.000/50.000 = {s[4] / s[5]:.3f} (√5 = {5 ** 0.5:.3f}); "
+              f"100/10.000 = {s[0] / s[4]:.2f} (√100 = 10)")
+    print("   Corte de severidad (VAN Fondo − VAN Sin, NAC, 10.000 réplicas por factor):")
+    filas = est.ic_corte_severidad(p, np.round(np.arange(0.25, 0.3501, 0.0125), 4))
+    for f_ in filas:
+        print(f"   ×{f_['factor']:.4f}  {f_['media'] / 1e6:7.3f} M ± {f_['semiancho'] / 1e6:.3f}")
+    cr = est.cruce_severidad(filas)
+    print(f"   → corte ×{cr['estimado']:.3f}  (IC 95 % ×{cr['inferior']:.3f} a ×{cr['superior']:.3f})")
+
+    print(LINEA)
+    print("12. Precio de corte de la malla: $/kg, USD/kg y tasa de descuento")
+    for t, c in est.cortes_por_tasa(res.esc, p, (0.03, 0.05, 0.08)).items():
+        print(f"   tasa {t:.0%}: malla = Fondo en {c['fondo']['pesos_kg']:7.1f} $/kg = {c['fondo']['usd_kg']:.3f} USD/kg ; "
+              f"malla = Sin en {c['sin_proteccion']['pesos_kg']:7.1f} $/kg = {c['sin_proteccion']['usd_kg']:.3f} USD/kg")
+    print(f"   Tipo de cambio ×0,5 / ×1 / ×2 (precio en USD/kg de corte):")
+    for factor in (0.5, 1.0, 2.0):
+        c = est.corte_escalando_tipo_de_cambio(res.esc, p, factor)
+        print(f"   TC {p.tipo_cambio * factor:7.0f} $/USD: contra Sin {c['sin_proteccion']['usd_kg']:.4f}  "
+              f"contra Fondo {c['fondo']['usd_kg']:.4f}")
+    print("   → contra Sin no depende del tipo de cambio; contra el Fondo sí (aporte y compensación fijos en pesos).")
 
     otra_corrida = mc.indicadores(mc.correr(Parametros(semilla=p.semilla)))
     print(LINEA)
