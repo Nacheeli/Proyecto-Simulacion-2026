@@ -265,3 +265,63 @@ def test_persistencia_misma_proporcion_de_G(base):
     pers = sens.persistencia(base.parametros, base)
     assert pers["independiente"]["proporcion_G"] == pytest.approx(pers["markov"]["proporcion_G"], abs=0.01)
     assert pers["markov"]["racha_G_media"] > pers["independiente"]["racha_G_media"]
+
+
+# ------------------------------------------------------------ v3: hectáreas
+@pytest.mark.parametrize("ha", [1.0, 10.0, 30.0])
+def test_van_escala_exactamente_con_las_hectareas(base, ha):
+    """Con costo fijo 0 todo es proporcional a las ha: VAN(ha) = VAN(5,3) · ha / 5,3, réplica por réplica."""
+    otra = mc.evaluar_escenarios(base.esc, replace(base.parametros, hectareas=ha))
+    for a in ("sin_proteccion", "fondo", "malla"):
+        assert np.allclose(otra.van[a], base.van[a] * ha / 5.3, rtol=1e-12, atol=1e-6)
+    assert sens.elegir_mejor(mc.indicadores(otra)) == sens.elegir_mejor(mc.indicadores(base))
+
+
+def test_costo_fijo_rompe_la_proporcionalidad_pero_es_igual_para_todas(base):
+    p = replace(base.parametros, costo_fijo_finca=1_000_000)
+    otra = mc.evaluar_escenarios(base.esc, p)
+    for a in ("sin_proteccion", "fondo", "malla"):
+        assert np.allclose(base.van[a] - otra.van[a], factor_anualidad(20, 0.05) * 1_000_000)
+
+
+def test_fondo_no_disponible_por_encima_de_30_ha(base):
+    otra = mc.evaluar_escenarios(base.esc, replace(base.parametros, hectareas=31))
+    ind = mc.indicadores(otra)
+    assert not ind["fondo"]["disponible"]
+    assert otra.compensacion.sum() == 0
+    assert sens.elegir_mejor(ind) != 1
+    assert mc.indicadores(mc.evaluar_escenarios(base.esc, replace(base.parametros, hectareas=30)))["fondo"]["disponible"]
+
+
+def test_percentil_1_anual_entre_peor_anio_y_media(base):
+    for a, i in mc.indicadores(base).items():
+        assert i["peor_anio"] <= i["p1_anual"] <= i["media_anual"]
+
+
+# ------------------------------------------------------------ v3: severidad
+def test_factor_de_severidad_escala_los_intervalos_altos():
+    from simulador.danio import aplicar_severidad
+    desde = [0.0, 0.0, 0.1, 0.2, 0.4, 0.6, 0.8]
+    probs = [0.52, 0.20, 0.12, 0.07, 0.05, 0.025, 0.015]
+    assert aplicar_severidad(desde, probs, 1.0) == pytest.approx(probs)
+    nuevo = aplicar_severidad(desde, probs, 2.0)
+    assert sum(nuevo) == pytest.approx(1)
+    assert nuevo[4:] == pytest.approx([0.10, 0.05, 0.03])
+    assert nuevo[0] / nuevo[1] == pytest.approx(probs[0] / probs[1])   # el resto conserva su forma
+    with pytest.raises(ValueError):
+        aplicar_severidad(desde, probs, 20.0)
+
+
+def test_severidad_aumenta_perdida_y_pagos():
+    p = Parametros()
+    a = sens.analisis_severidad(p, [0.5, 1.0, 2.0], [400], [5.3], replicas=2000)
+    assert np.all(np.diff(a["perdida_media"]) > 0)
+    assert np.all(np.diff(a["prob_paga"]) > 0)
+    assert np.all(np.diff(a["pagos_sobre_aportes"]) > 0)
+
+
+def test_severidad_uno_reproduce_la_corrida_base():
+    p = Parametros(replicas=2000)
+    a = sens.analisis_severidad(p, [1.0], [p.precio_uva], [p.hectareas], replicas=2000)
+    base_chica = mc.indicadores(mc.correr(p))
+    assert a["van_media"]["fondo"][0] == pytest.approx(base_chica["fondo"]["van_media"])

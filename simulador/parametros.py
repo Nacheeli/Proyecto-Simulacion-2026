@@ -37,12 +37,14 @@ class Parametros:
     danio_desde: list = field(default_factory=lambda: list(S.TABLA_DANIO_DESDE))
     danio_hasta: list = field(default_factory=lambda: list(S.TABLA_DANIO_HASTA))
     danio_probabilidades: list = field(default_factory=lambda: list(S.TABLA_DANIO_PROBABILIDADES))
+    severidad: float = S.FACTOR_SEVERIDAD                      # SUPUESTO
 
     # Economía – SUPUESTOS
     precio_uva: float = S.PRECIO_UVA_POR_KG
     costo_produccion_ha: float = S.COSTO_PRODUCCION_POR_HA
     tipo_cambio: float = S.TIPO_DE_CAMBIO
     tasa_descuento: float = S.TASA_DESCUENTO
+    costo_fijo_finca: float = S.COSTO_FIJO_FINCA
 
     # Fondo Compensador – real (salvo modo y condición)
     fca_aporte_ha: float = R.FCA_APORTE_POR_HA
@@ -50,6 +52,7 @@ class Parametros:
     fca_umbral: float = R.FCA_UMBRAL_DANIO
     fca_modo: str = S.FCA_MODO_COMPENSACION                    # SUPUESTO
     fca_condicion: str = S.FCA_CONDICION_PAGO                  # SUPUESTO
+    fca_max_hectareas: float = R.FCA_MAX_HECTAREAS             # por encima no se puede adherir
 
     # Malla – costo y vida dentro del rango real; eficacia y pago SUPUESTOS
     malla_costo_usd_ha: float = S.MALLA_COSTO_USD_HA
@@ -65,12 +68,12 @@ class Parametros:
     # Sensibilidad (pestaña 4)
     sens_replicas: int = 2000
     sens_precio_min: float = 200
-    sens_precio_max: float = 800
+    sens_precio_max: float = 1000
     sens_precio_paso: float = 50
-    sens_ha_max: int = 30
-    sens_frec_min: float = 0.5
-    sens_frec_max: float = 2.0
-    sens_frec_paso: float = 0.25
+    sens_sev_min: float = 0.25
+    sens_sev_max: float = 3.0
+    sens_sev_paso: float = 0.25
+    sens_ha_max: int = 60
     criterio_p5_minimo: float = 0.0   # "mejor" = mayor VAN medio con P5 del VAN > este valor
 
     def validar(self):
@@ -84,6 +87,8 @@ class Parametros:
         for nombre in ("p_s_a_g", "p_g_a_s", "malla_eficacia", "fca_umbral"):
             if not 0 <= getattr(self, nombre) <= 1:
                 errores.append(f"{nombre} debe estar entre 0 y 1.")
+        if self.severidad < 0:
+            errores.append("El factor de severidad no puede ser negativo.")
         if self.frecuencia_mult < 0:
             errores.append("El multiplicador de frecuencia no puede ser negativo.")
         if self.tasa_descuento <= -1 or self.malla_tasa_anual < 0:

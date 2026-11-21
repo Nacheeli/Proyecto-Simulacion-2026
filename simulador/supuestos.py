@@ -23,6 +23,11 @@ TABLA_DANIO_DESDE = [0.00, 0.00, 0.10, 0.20, 0.40, 0.60, 0.80]
 TABLA_DANIO_HASTA = [0.00, 0.10, 0.20, 0.40, 0.60, 0.80, 1.00]
 TABLA_DANIO_PROBABILIDADES = [0.52, 0.20, 0.12, 0.07, 0.05, 0.025, 0.015]
 
+# Factor de severidad (SUPUESTO, para sensibilidad): multiplica la probabilidad
+# de los intervalos de daño alto (40–60, 60–80, 80–100 %) y renormaliza el resto.
+# 1 = la tabla de arriba.
+FACTOR_SEVERIDAD = 1.0
+
 # Superficie cultivada total del Oasis Sur (todos los cultivos), para pasar
 # las ha dañadas de la DACC a una tasa.  SUPUESTO (dato pendiente).
 SUPERFICIE_CULTIVADA_SUR_HA = 60_000
@@ -35,6 +40,10 @@ PRECIO_UVA_POR_KG = 400               # $/kg en San Rafael
 COSTO_PRODUCCION_POR_HA = 2_200_000   # $/ha/año
 TIPO_DE_CAMBIO = 1450                 # $/USD
 TASA_DESCUENTO = 0.05                 # tasa anual real para el VAN
+# Costo fijo por finca y por año, independiente de las hectáreas (administración,
+# maquinaria, etc.). Es igual para las tres alternativas. Por defecto 0, así todo
+# el modelo es proporcional a las hectáreas.
+COSTO_FIJO_FINCA = 0
 
 # ---------------------------------------------------------------------------
 # Fondo Compensador.

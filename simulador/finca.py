@@ -10,6 +10,8 @@ Resultado del año (pesos constantes, flujo de caja del año):
     sin protección = ingreso − costo de producción
     Fondo          = ingreso − costo de producción − aporte + compensación
     malla          = ingreso con daño reducido − costo de producción − pagos de la malla
+    costo de producción = costo/ha × ha + costo fijo por finca (por defecto 0)
+El Fondo no está disponible por encima de 30 ha (límite real).
 
 VAN: los resultados operativos se descuentan como flujos de fin de año
 (año t -> (1+i)^t). La compra de la malla al contado ocurre al INICIO del año
@@ -22,7 +24,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .clima import CadenaMarkov, tabla_dias_condicional
-from .danio import TablaDanio, combinar_danios, danios_con_malla
+from .danio import TablaDanio, aplicar_severidad, combinar_danios, danios_con_malla
 from . import datos_reales as R
 
 ALTERNATIVAS = ("sin_proteccion", "fondo", "malla")
@@ -55,7 +57,8 @@ class ModeloClima:
             valores, probs = tabla_dias_real
         self.cadena = CadenaMarkov(p.p_s_a_g, p.p_g_a_s)
         self.dias_si_g = tabla_dias_condicional(valores, probs)
-        self.tabla_danio = TablaDanio(p.danio_desde, p.danio_hasta, p.danio_probabilidades)
+        probs = aplicar_severidad(p.danio_desde, p.danio_probabilidades, p.severidad)
+        self.tabla_danio = TablaDanio(p.danio_desde, p.danio_hasta, probs)
 
     def _aplicar_multiplicador(self, n, gen):
         """Escala la cantidad de granizadas con redondeo estocástico: E[n'] = mult · n.
@@ -141,8 +144,15 @@ def fondo_paga(danio, p):
     return danio >= p.fca_umbral if p.fca_condicion == ">=" else danio > p.fca_umbral
 
 
+def fondo_disponible(p):
+    """El Fondo solo admite productores de hasta 30 ha cultivadas (dato real)."""
+    return p.hectareas <= p.fca_max_hectareas
+
+
 def compensacion_fondo(danio, p):
     danio = np.asarray(danio, dtype=float)
+    if not fondo_disponible(p):
+        return np.zeros_like(danio)
     base = p.fca_compensacion_ha * p.hectareas
     monto = base * danio if p.fca_modo == "proporcional" else base * np.ones_like(danio)
     return np.where(fondo_paga(danio, p), monto, 0.0)
@@ -208,9 +218,12 @@ def evaluar(danio, danio_malla, rendimiento, p, pagos_malla=None):
     if pagos_malla is None:
         pagos_malla = costo_malla_por_anio(p)
     inicio, fin = pagos_malla
-    costo_prod = p.costo_produccion_ha * p.hectareas
+    costo_prod = p.costo_produccion_ha * p.hectareas + p.costo_fijo_finca
     sin = ingreso(danio, rendimiento, p) - costo_prod
-    fondo = sin - p.fca_aporte_ha * p.hectareas + compensacion_fondo(danio, p)
+    if fondo_disponible(p):
+        fondo = sin - p.fca_aporte_ha * p.hectareas + compensacion_fondo(danio, p)
+    else:
+        fondo = sin.copy()   # no puede adherir: queda igual que sin protección (se marca no disponible)
     malla = ingreso(danio_malla, rendimiento, p) - costo_prod - inicio - fin
     return {"sin_proteccion": sin, "fondo": fondo, "malla": malla}
 

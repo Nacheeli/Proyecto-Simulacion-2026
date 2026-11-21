@@ -2,12 +2,20 @@
 Módulo 7 – Sensibilidad y experimento de persistencia (pestaña 4).
 
 Criterio de "mejor alternativa" (configurable con criterio_p5_minimo):
-    entre las alternativas cuyo P5 del VAN es MAYOR que criterio_p5_minimo
-    (por defecto 0, es decir, que en el 95 % de los futuros no pierden plata),
-    la de mayor VAN medio. Si ninguna cumple, el resultado es "ninguna".
+    entre las alternativas DISPONIBLES cuyo P5 del VAN es MAYOR que
+    criterio_p5_minimo (por defecto 0: en el 95 % de los futuros no pierden
+    plata), la de mayor VAN medio. Si ninguna cumple, el resultado es "ninguna".
 
-Todas las corridas usan la misma semilla (números aleatorios comunes), así
-las diferencias entre puntos del barrido no son ruido de muestreo.
+Nota sobre las hectáreas: con costo fijo por finca = 0, todo el modelo es
+proporcional a las hectáreas (ingresos, costos, aportes, compensaciones y
+malla), así que el VAN escala exactamente con ellas y el ranking NO puede
+cambiar con el tamaño. Las hectáreas solo importan por el límite de 30 ha del
+Fondo y por un costo fijo por finca, que además es igual para las tres
+alternativas y solo afecta el criterio P5 > 0.
+
+Todas las corridas usan la misma semilla (números aleatorios comunes). El
+factor de severidad cambia la tabla de daño pero no la secuencia de números
+aleatorios, así que los escenarios de distintos factores son comparables.
 """
 
 from dataclasses import replace
@@ -15,6 +23,7 @@ from dataclasses import replace
 import numpy as np
 
 from .clima import CadenaMarkov
+from .danio import referencia_dacc
 from .finca import ALTERNATIVAS, fondo_paga
 from . import montecarlo as mc
 
@@ -23,7 +32,8 @@ NINGUNA = -1
 
 def elegir_mejor(ind, p5_minimo=0.0):
     """Índice en ALTERNATIVAS de la mejor alternativa, o NINGUNA."""
-    candidatas = [k for k, a in enumerate(ALTERNATIVAS) if ind[a]["van_p5"] > p5_minimo]
+    candidatas = [k for k, a in enumerate(ALTERNATIVAS)
+                  if ind[a].get("disponible", True) and ind[a]["van_p5"] > p5_minimo]
     if not candidatas:
         return NINGUNA
     return max(candidatas, key=lambda k: ind[ALTERNATIVAS[k]]["van_media"])
@@ -46,26 +56,62 @@ def barrido_precio(res, precios):
     return {"precios": list(precios), "por_alternativa": salida, "mejor": mejores}
 
 
-def mapa_mejor(p, hectareas, multiplicadores):
-    """Mejor alternativa para cada (multiplicador de frecuencia, hectáreas).
+def analisis_severidad(p, factores, precios, hectareas, replicas=None):
+    """Barrido del factor de severidad del daño, con dos mapas de mejor alternativa.
 
-    Por cada multiplicador se generan escenarios nuevos (sens_replicas réplicas);
-    las hectáreas no cambian el clima, así que se reevalúan sobre esos escenarios.
+    Por cada factor se generan escenarios nuevos (misma semilla) y sobre ellos:
+      - indicadores de daño: P(el Fondo paga), pérdida media anual, pagos/aportes;
+      - VAN medio y P5 de cada alternativa y mejor alternativa (con los parámetros base);
+      - mapa precio de la uva × severidad (se reevalúan los mismos escenarios);
+      - mapa hectáreas × severidad (importa por el límite de 30 ha y el costo fijo).
     """
-    mejor = np.full((len(multiplicadores), len(hectareas)), NINGUNA, dtype=int)
-    van_media = {a: np.zeros_like(mejor, dtype=float) for a in ALTERNATIVAS}
-    van_p5 = {a: np.zeros_like(mejor, dtype=float) for a in ALTERNATIVAS}
-    for i, m in enumerate(multiplicadores):
-        pm = replace(p, frecuencia_mult=float(m), replicas=p.sens_replicas)
-        esc = mc.generar_escenarios(pm)
+    replicas = replicas or p.sens_replicas
+    dacc = referencia_dacc(p.superficie_cultivada_sur)
+    nf = len(factores)
+    salida = {
+        "factores": list(factores), "precios": list(precios), "hectareas": list(hectareas),
+        "prob_paga": np.zeros(nf), "perdida_media": np.zeros(nf), "pagos_sobre_aportes": np.zeros(nf),
+        "dentro_dacc": np.zeros(nf, dtype=bool), "mejor": np.full(nf, NINGUNA),
+        "van_media": {a: np.zeros(nf) for a in ALTERNATIVAS},
+        "van_p5": {a: np.zeros(nf) for a in ALTERNATIVAS},
+        "mapa_precio": np.full((nf, len(precios)), NINGUNA),
+        "mapa_ha": np.full((nf, len(hectareas)), NINGUNA),
+        "dacc": dacc, "replicas": replicas,
+    }
+    for i, f in enumerate(factores):
+        pf = replace(p, severidad=float(f), replicas=replicas)
+        esc = mc.generar_escenarios(pf)
+        res = mc.evaluar_escenarios(esc, pf)
+        ind = mc.indicadores(res)
+        salida["prob_paga"][i] = float(fondo_paga(esc.danio, pf).mean())
+        salida["perdida_media"][i] = float(esc.danio.mean())
+        salida["pagos_sobre_aportes"][i] = mc.equilibrio_fondo(res)["pagos_sobre_aportes"]
+        salida["dentro_dacc"][i] = dacc["con_lucha"] <= salida["perdida_media"][i] <= dacc["sin_lucha"]
+        salida["mejor"][i] = elegir_mejor(ind, p.criterio_p5_minimo)
+        for a in ALTERNATIVAS:
+            salida["van_media"][a][i] = ind[a]["van_media"]
+            salida["van_p5"][a][i] = ind[a]["van_p5"]
+        for j, precio in enumerate(precios):
+            ij = mc.indicadores(mc.evaluar_escenarios(esc, replace(pf, precio_uva=float(precio))))
+            salida["mapa_precio"][i, j] = elegir_mejor(ij, p.criterio_p5_minimo)
         for j, ha in enumerate(hectareas):
-            ind = mc.indicadores(mc.evaluar_escenarios(esc, replace(pm, hectareas=float(ha))))
-            mejor[i, j] = elegir_mejor(ind, p.criterio_p5_minimo)
-            for a in ALTERNATIVAS:
-                van_media[a][i, j] = ind[a]["van_media"]
-                van_p5[a][i, j] = ind[a]["van_p5"]
-    return {"hectareas": list(hectareas), "multiplicadores": list(multiplicadores),
-            "mejor": mejor, "van_media": van_media, "van_p5": van_p5}
+            ij = mc.indicadores(mc.evaluar_escenarios(esc, replace(pf, hectareas=float(ha))))
+            salida["mapa_ha"][i, j] = elegir_mejor(ij, p.criterio_p5_minimo)
+    return salida
+
+
+def factor_cambio_fondo(analisis):
+    """Tramos de severidad donde el Fondo deja de ser (o pasa a ser) la mejor alternativa.
+
+    Devuelve una lista de (factor_antes, factor_despues, mejor_antes, mejor_despues).
+    """
+    k_fondo = ALTERNATIVAS.index("fondo")
+    cambios = []
+    f, m = analisis["factores"], analisis["mejor"]
+    for i in range(1, len(f)):
+        if (m[i - 1] == k_fondo) != (m[i] == k_fondo):
+            cambios.append((f[i - 1], f[i], int(m[i - 1]), int(m[i])))
+    return cambios
 
 
 def racha_maxima(fuerte):

@@ -7,7 +7,8 @@ comunes), así la comparación es justa.
 
 Indicador principal: VAN (valor actual neto) a la tasa de descuento.
 Por alternativa: media, desvío y P5 del VAN, suma sin descontar,
-% de años con pérdida (resultado anual < 0) y peor año.
+% de años con pérdida (resultado anual < 0), percentil 1 de los resultados
+anuales (más estable que el peor año) y peor año.
 """
 
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .finca import (ALTERNATIVAS, ModeloClima, compensacion_fondo, costo_malla_por_anio,
-                    evaluar, van_alternativas)
+                    evaluar, fondo_disponible, fondo_paga, van_alternativas)
 from .generador import GeneradorLCG
 
 
@@ -126,6 +127,8 @@ def indicadores(res):
             "p5": float(np.percentile(tot, 5)),
             "pct_anios_perdida": float((anu < 0).mean() * 100),
             "peor_anio": float(anu.min()),
+            "p1_anual": float(np.percentile(anu, 1)),
+            "disponible": True if a != "fondo" else bool(fondo_disponible(res.parametros)),
             "media_anual": float(anu.mean()),
         }
     return salida
@@ -159,5 +162,6 @@ def resumen_clima(res):
         "danio_medio_anual_malla": float(res.danio_malla.mean()),
         "prob_danio_supera_umbral": float((res.danio > p.fca_umbral).mean()),
         "prob_danio_igual_umbral": float((res.danio == p.fca_umbral).mean()),
+        "prob_danio_paga": float(fondo_paga(res.danio, p).mean()),
         "danio_medio_evento": float(res.eventos_danio.mean()) if res.eventos_danio.size else 0.0,
     }

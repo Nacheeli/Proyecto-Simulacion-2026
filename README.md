@@ -37,7 +37,7 @@ simulador/              Lógica del modelo (importable, sin interfaz)
   danio.py              Módulo 4 – daño continuo por evento y combinación         (TP4)
   finca.py              Módulo 5 – escenario de 20 años, resultado anual y VAN    (TP4)
   montecarlo.py         Módulo 6 – 10.000 réplicas e indicadores                  (TP7)
-  sensibilidad.py       Módulo 7 – precio, mapa ha × frecuencia, persistencia     (TP6)
+  sensibilidad.py       Módulo 7 – precio, severidad, mapas, persistencia         (TP6)
 tests/test_modelo.py    Pruebas: casos a mano, frecuencias, VAN, semilla
 ```
 
@@ -60,7 +60,9 @@ eventos de cada año con redondeo estocástico, para la sensibilidad.
 (0 %, 0–10, 10–20, 20–40, 40–60, 60–80 y 80–100 %): un número aleatorio elige el intervalo y la
 posición dentro de él (transformada inversa de una función de distribución lineal por tramos). Los
 daños del año se combinan como lo hace el Fondo: `1 − (1−d1)(1−d2)…`. La malla reduce cada
-granizada en un 90 % (**SUPUESTO**).
+granizada en un 90 % (**SUPUESTO**). Un **factor de severidad** (SUPUESTO, por defecto 1) multiplica la
+probabilidad de los intervalos de daño alto (40–60, 60–80, 80–100 %) y renormaliza el resto; se usa en
+la sensibilidad.
 
 **Finca.** 5,3 ha, rendimiento uniforme entre 7.100 y 7.600 kg/ha (INV). Resultado del año en pesos
 constantes:
@@ -71,6 +73,10 @@ constantes:
 | Fondo Compensador | lo anterior − aporte + compensación (si el daño es ≥ 50 %, configurable a > 50 %) |
 | Malla | ha·rend·precio·(1−daño con malla) − costo de producción − pagos de la malla |
 
+El costo de producción es costo/ha × ha + costo fijo por finca (SUPUESTO, por defecto 0). Con costo fijo 0
+**todo el modelo es proporcional a las hectáreas**: el VAN escala exactamente con ellas y el ranking no
+puede cambiar con el tamaño de la finca. Por encima de 30 ha el Fondo no está disponible (límite real).
+
 **VAN.** Indicador principal. Tasa de descuento real 5 % (**SUPUESTO**). Los resultados se
 descuentan como flujos de fin de año; la compra al contado de la malla, al inicio del año. La malla
 "amortizada" paga cada año el **costo anual equivalente** a la tasa de descuento, por eso las tres
@@ -79,11 +85,14 @@ cuando la tasa del crédito es igual a la de descuento.
 
 **Monte Carlo.** 10.000 réplicas de 20 años. Las tres alternativas se evalúan sobre **los mismos**
 escenarios de clima (números aleatorios comunes). Indicadores: media, desvío y P5 del VAN, suma sin
-descontar, % de años con pérdida y peor año.
+descontar, % de años con pérdida, percentil 1 de los resultados anuales y peor año (el peor año es el
+mínimo entre 200.000 años simulados y depende de la cantidad de réplicas; el P1 es más estable).
 
 **Decisión (pestaña 4).** Rentabilidad contra riesgo (VAN medio vs P5), sensibilidad al precio de la
-uva, mapa de la mejor alternativa según hectáreas (1–30) y multiplicador de granizadas (0,5–2), y
-experimento de persistencia (Markov real contra años independientes con la misma proporción de G).
+uva, barrido del factor de severidad (P(el Fondo paga), pérdida media anual, pagos/aportes, con el rango
+creíble según la DACC marcado), mapa de la mejor alternativa según precio (200–1000 $/kg) × severidad
+(0,25–3), mapa según hectáreas (1–60) × severidad, y experimento de persistencia (Markov real contra
+años independientes con la misma proporción de G).
 **Criterio de mejor:** el mayor VAN medio entre las alternativas cuyo P5 del VAN es mayor que 0
 (configurable).
 
@@ -104,6 +113,9 @@ En la interfaz los reales se marcan con **(R)** y los supuestos con **(S)**.
 | Costo de producción | $2.200.000/ha/año | **SUPUESTO** |
 | Tipo de cambio | $1.450/USD | **SUPUESTO** |
 | Tasa de descuento real | 5 % anual | **SUPUESTO** |
+| Factor de severidad del daño | 1 | **SUPUESTO** (sensibilidad 0,25–3) |
+| Costo fijo por finca | $0/año | **SUPUESTO** |
+| Máximo de hectáreas para el Fondo | 30 ha | REAL – Gob. de Mendoza |
 | Compensación del Fondo | proporcional al daño | **SUPUESTO** (proporcional / fijo) |
 | Condición de pago del Fondo | daño ≥ 50 % | **SUPUESTO** (las fuentes se contradicen: ≥ / >) |
 | Eficacia de la malla | 90 % | **SUPUESTO** |
@@ -114,5 +126,6 @@ referencia DACC para el Oasis Sur (5.000 a 11.000 ha llevadas al 100 % por año 
 cultivadas) da 8,3 % a 18,3 %.
 
 **Supuesto más influyente.** Con la tabla de daño actual el Fondo paga en promedio 2,8 veces lo que
-la finca aporta (P(cobrar) ≈ 10 % por año). Por eso el Fondo resulta la mejor alternativa en casi todos
-los escenarios. Ese cociente depende sobre todo de la cola de la tabla de daño (años con daño ≥ 50 %).
+la finca aporta (P(cobrar) ≈ 10 % por año). Ese cociente depende de la cola de la tabla de daño (años con
+daño ≥ 50 %). El factor de severidad lo barre: el Fondo deja de ser la mejor alternativa con un factor de
+≈ 0,28, justo donde pagos/aportes ≈ 1, en el borde inferior del rango creíble según la DACC.

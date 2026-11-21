@@ -77,12 +77,14 @@ GRUPOS = [
         ("p_g_a_s", "P(G → S)", "R", 1, float),
         ("estado_inicial", "Estado del año 1", "S", ["estacionaria", "G", "S"], str),
         ("frecuencia_mult", "Multiplicador granizadas", "", 1, float),
+        ("severidad", "Factor severidad del daño", "S", 1, float),
     ]),
     ("Economía", [
         ("precio_uva", "Precio uva ($/kg)", "S", 1, float),
         ("costo_produccion_ha", "Costo producción ($/ha/año)", "S", 1, float),
         ("tipo_cambio", "Tipo de cambio ($/USD)", "S", 1, float),
         ("tasa_descuento", "Tasa de descuento real (%)", "S", 100, float),
+        ("costo_fijo_finca", "Costo fijo por finca ($/año)", "S", 1, float),
     ]),
     ("Fondo Compensador (Específica, Sur)", [
         ("fca_aporte_ha", "Aporte ($/ha/año)", "R", 1, float),
@@ -90,6 +92,7 @@ GRUPOS = [
         ("fca_umbral", "Umbral de daño (%)", "R", 100, float),
         ("fca_modo", "Compensación", "S", ["proporcional", "fijo"], str),
         ("fca_condicion", "Paga si daño … umbral", "S", [">=", ">"], str),
+        ("fca_max_hectareas", "Máximo de hectáreas", "R", 1, float),
     ]),
     ("Malla antigranizo", [
         ("malla_costo_usd_ha", "Costo (USD/ha)", "R", 1, float),
@@ -103,14 +106,14 @@ GRUPOS = [
         ("superficie_cultivada_sur", "Sup. cultivada Oasis Sur (ha)", "S", 1, float),
     ]),
     ("Sensibilidad (pestaña 4)", [
-        ("sens_replicas", "Réplicas por punto del mapa", "", 1, int),
+        ("sens_replicas", "Réplicas por factor severidad", "", 1, int),
         ("sens_precio_min", "Precio desde ($/kg)", "", 1, float),
         ("sens_precio_max", "Precio hasta ($/kg)", "", 1, float),
         ("sens_precio_paso", "Precio paso ($/kg)", "", 1, float),
-        ("sens_ha_max", "Hectáreas hasta", "", 1, int),
-        ("sens_frec_min", "Mult. granizadas desde", "", 1, float),
-        ("sens_frec_max", "Mult. granizadas hasta", "", 1, float),
-        ("sens_frec_paso", "Mult. granizadas paso", "", 1, float),
+        ("sens_sev_min", "Severidad desde", "", 1, float),
+        ("sens_sev_max", "Severidad hasta", "", 1, float),
+        ("sens_sev_paso", "Severidad paso", "", 1, float),
+        ("sens_ha_max", "Hectáreas hasta (mapa)", "", 1, int),
         ("criterio_p5_minimo", "Criterio: P5 del VAN > ($)", "", 1, float),
     ]),
 ]
@@ -460,7 +463,7 @@ class App(tk.Tk):
         self.canvas_mc = FigureCanvasTkAgg(self.fig_mc, master=tab)
         self.canvas_mc.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         cols = ("ind",) + ALTERNATIVAS
-        self.tv_mc = ttk.Treeview(tab, columns=cols, show="headings", height=10)
+        self.tv_mc = ttk.Treeview(tab, columns=cols, show="headings", height=11)
         self.tv_mc.heading("ind", text="Indicador")
         self.tv_mc.column("ind", width=330, anchor="w")
         for a in ALTERNATIVAS:
@@ -481,6 +484,7 @@ class App(tk.Tk):
             (f"Suma sin descontar {p.anios} años – media", "media", fmt_m, max),
             ("Suma sin descontar – P5", "p5", fmt_m, max),
             ("% de años con pérdida", "pct_anios_perdida", lambda v: f"{fmt(v, 1)} %", min),
+            ("Percentil 1 de los resultados anuales", "p1_anual", fmt_m, max),
             ("Peor año (mínimo de todas las réplicas)", "peor_anio", fmt_m, max),
         ]
         self.tv_mc.delete(*self.tv_mc.get_children())
@@ -516,7 +520,7 @@ class App(tk.Tk):
         self.pestanias.add(tab, text="  4 · Decisión  ")
         self.lbl_decision = ttk.Label(tab, justify="left")
         self.lbl_decision.pack(anchor="w", padx=8, pady=(6, 0))
-        self.fig_dec = Figure(figsize=(10, 5.4), constrained_layout=True)
+        self.fig_dec = Figure(figsize=(11, 5.6), constrained_layout=True)
         self.canvas_dec = FigureCanvasTkAgg(self.fig_dec, master=tab)
         self.canvas_dec.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
         cols = ("ind",) + tuple(f"{a}_{k}" for a in ALTERNATIVAS for k in ("markov", "indep"))
@@ -533,68 +537,118 @@ class App(tk.Tk):
         ind = mc.indicadores(res)
         precios = np.arange(p.sens_precio_min, p.sens_precio_max + p.sens_precio_paso / 2, p.sens_precio_paso)
         barrido = sens.barrido_precio(res, precios)
+        factores = np.arange(p.sens_sev_min, p.sens_sev_max + p.sens_sev_paso / 2, p.sens_sev_paso)
         hectareas = np.arange(1, p.sens_ha_max + 1)
-        mults = np.arange(p.sens_frec_min, p.sens_frec_max + p.sens_frec_paso / 2, p.sens_frec_paso)
-        mapa = sens.mapa_mejor(p, hectareas, mults)
+        sev = sens.analisis_severidad(p, factores, precios, hectareas)
         pers = sens.persistencia(p, res)
 
         mejor_base = sens.elegir_mejor(ind, p.criterio_p5_minimo)
         texto_mejor = NOMBRES[ALTERNATIVAS[mejor_base]] if mejor_base != sens.NINGUNA else "ninguna"
+        cambios = sens.factor_cambio_fondo(sev)
+        texto_cambio = "; ".join(
+            f"entre ×{fmt(a)} y ×{fmt(b)} pasa de {NOMBRES[ALTERNATIVAS[m1]] if m1 >= 0 else 'ninguna'} "
+            f"a {NOMBRES[ALTERNATIVAS[m2]] if m2 >= 0 else 'ninguna'}" for a, b, m1, m2 in cambios) or "no cambia en el rango"
         self.lbl_decision.configure(text=(
-            f"Criterio de mejor alternativa: mayor VAN medio entre las que tienen P5 del VAN > "
-            f"{fmt_m(p.criterio_p5_minimo)}. Con los parámetros actuales: {texto_mejor}.   "
-            f"Mapa: {p.sens_replicas} réplicas por punto, misma semilla."))
+            f"Criterio: mayor VAN medio entre las alternativas disponibles con P5 del VAN > {fmt_m(p.criterio_p5_minimo)}. "
+            f"Con los parámetros actuales: {texto_mejor}.\n"
+            f"Severidad – el Fondo como mejor alternativa: {texto_cambio}.   "
+            f"Barridos de severidad: {sev['replicas']} réplicas por punto, misma semilla. "
+            f"Fondo disponible hasta {fmt(p.fca_max_hectareas, 0)} ha."))
+
+        from matplotlib.colors import ListedColormap
+        from matplotlib.patches import Patch
+        cmap = ListedColormap(["#d9d9d9"] + [COLORES[a] for a in ALTERNATIVAS])
+        leyenda_mapa = [Patch(color=COLORES[a], label=NOMBRES[a]) for a in ALTERNATIVAS] + \
+                       [Patch(color="#d9d9d9", label="Ninguna")]
+        paso_f = p.sens_sev_paso
 
         f = self.fig_dec
         f.clear()
-        (ax1, ax2), (ax3, ax4) = f.subplots(2, 2)
+        (ax1, ax2, ax3), (ax4, ax5, ax6) = f.subplots(2, 3)
+
+        # 1. Rentabilidad vs riesgo
         for a in ALTERNATIVAS:
             ax1.scatter(ind[a]["van_p5"] / 1e6, ind[a]["van_media"] / 1e6, s=80, color=COLORES[a], label=NOMBRES[a])
         ax1.axvline(p.criterio_p5_minimo / 1e6, color="#999999", ls=":")
         ax1.set_xlabel("P5 del VAN (millones $) → menos riesgo")
         ax1.set_ylabel("VAN medio (millones $)")
         ax1.set_title("Rentabilidad vs riesgo")
-        ax1.legend(fontsize=8)
+        ax1.legend(fontsize=7)
         ax1.grid(alpha=0.3)
 
+        # 2. Precio de la uva (severidad base)
         for a in ALTERNATIVAS:
             d = barrido["por_alternativa"][a]
-            ax2.plot(precios, np.array(d["van_media"]) / 1e6, color=COLORES[a], marker="o", ms=3, label=f"{NOMBRES[a]} media")
+            ax2.plot(precios, np.array(d["van_media"]) / 1e6, color=COLORES[a], marker="o", ms=2, label=f"{NOMBRES[a]} media")
             ax2.plot(precios, np.array(d["van_p5"]) / 1e6, color=COLORES[a], ls=":", label=f"{NOMBRES[a]} P5")
         ax2.axhline(0, color="black", lw=0.8)
         ax2.axvline(p.precio_uva, color="#999999", ls="--")
         ax2.set_xlabel("precio de la uva ($/kg)")
         ax2.set_ylabel("VAN (millones $)")
-        ax2.set_title("Sensibilidad al precio de la uva")
-        ax2.legend(fontsize=7, ncol=2)
+        ax2.set_title("Sensibilidad al precio")
+        ax2.legend(fontsize=6, ncol=2)
         ax2.grid(alpha=0.3)
 
-        from matplotlib.colors import ListedColormap
-        cmap = ListedColormap(["#d9d9d9"] + [COLORES[a] for a in ALTERNATIVAS])
-        ax3.imshow(mapa["mejor"] + 1, cmap=cmap, vmin=0, vmax=3, aspect="auto", origin="lower",
-                   extent=(hectareas[0] - 0.5, hectareas[-1] + 0.5,
-                           mults[0] - p.sens_frec_paso / 2, mults[-1] + p.sens_frec_paso / 2))
-        ax3.axvline(p.hectareas, color="black", ls="--", lw=0.8)
-        ax3.axhline(p.frecuencia_mult, color="black", ls="--", lw=0.8)
-        ax3.set_xlabel("hectáreas")
-        ax3.set_ylabel("multiplicador de granizadas")
-        ax3.set_title("Mejor alternativa (gris: ninguna cumple el criterio)")
-        from matplotlib.patches import Patch
-        ax3.legend(handles=[Patch(color=COLORES[a], label=NOMBRES[a]) for a in ALTERNATIVAS]
-                   + [Patch(color="#d9d9d9", label="Ninguna")], fontsize=7, loc="upper right")
+        # 3. Severidad: daño y equilibrio del Fondo
+        ok = sev["dentro_dacc"]
+        if ok.any():
+            ax3.axvspan(factores[ok].min() - paso_f / 2, factores[ok].max() + paso_f / 2,
+                        color="#f2c14e", alpha=0.3, label="pérdida dentro del rango DACC")
+        ax3.plot(factores, sev["perdida_media"] * 100, marker="o", ms=3, color="black", label="pérdida media anual %")
+        ax3.plot(factores, sev["prob_paga"] * 100, marker="s", ms=3, color="#4f81bd",
+                 label=f"P(daño {p.fca_condicion} {fmt(p.fca_umbral * 100, 0)} %) %")
+        ax3.set_xlabel("factor de severidad del daño")
+        ax3.set_ylabel("%")
+        ax3b = ax3.twinx()
+        ax3b.plot(factores, sev["pagos_sobre_aportes"], color="#c55a11", ls="--", label="pagos / aportes (eje der.)")
+        ax3b.axhline(1, color="#c55a11", lw=0.6, ls=":")
+        ax3b.set_ylabel("pagos / aportes del Fondo")
+        for a, b, _, _ in cambios:
+            ax3.axvline((a + b) / 2, color="red", lw=1)
+        ax3.axvline(p.severidad, color="#999999", ls="--")
+        lineas = ax3.get_legend_handles_labels()
+        lineas_b = ax3b.get_legend_handles_labels()
+        ax3.legend(lineas[0] + lineas_b[0], lineas[1] + lineas_b[1], fontsize=6, loc="upper left")
+        ax3.set_title("Severidad del daño")
+        ax3.grid(alpha=0.3)
 
+        # 4. Mapa precio × severidad
+        ax4.imshow(sev["mapa_precio"] + 1, cmap=cmap, vmin=0, vmax=3, aspect="auto", origin="lower",
+                   extent=(precios[0] - p.sens_precio_paso / 2, precios[-1] + p.sens_precio_paso / 2,
+                           factores[0] - paso_f / 2, factores[-1] + paso_f / 2))
+        if ok.any():
+            for y in (factores[ok].min() - paso_f / 2, factores[ok].max() + paso_f / 2):
+                ax4.axhline(y, color="black", lw=1.2)
+        ax4.axvline(p.precio_uva, color="black", ls="--", lw=0.8)
+        ax4.axhline(p.severidad, color="black", ls="--", lw=0.8)
+        ax4.set_xlabel("precio de la uva ($/kg)")
+        ax4.set_ylabel("factor de severidad")
+        ax4.set_title("Mejor: precio × severidad")
+        ax4.legend(handles=leyenda_mapa, fontsize=6, loc="upper left")
+
+        # 5. Mapa hectáreas × severidad
+        ax5.imshow(sev["mapa_ha"] + 1, cmap=cmap, vmin=0, vmax=3, aspect="auto", origin="lower",
+                   extent=(hectareas[0] - 0.5, hectareas[-1] + 0.5, factores[0] - paso_f / 2, factores[-1] + paso_f / 2))
+        ax5.axvline(p.fca_max_hectareas + 0.5, color="black", lw=1.2)
+        ax5.axvline(p.hectareas, color="black", ls="--", lw=0.8)
+        ax5.axhline(p.severidad, color="black", ls="--", lw=0.8)
+        ax5.set_xlabel(f"hectáreas (costo fijo por finca {fmt_m(p.costo_fijo_finca)})")
+        ax5.set_ylabel("factor de severidad")
+        ax5.set_title("Mejor: hectáreas × severidad")
+
+        # 6. Persistencia
         x = np.arange(len(ALTERNATIVAS))
         for k, (nombre, desplaz, rel) in enumerate((("markov", -0.2, "Markov real"), ("independiente", 0.2, "Independientes"))):
             ii = pers[nombre]["indicadores"]
-            ax4.bar(x + desplaz, [ii[a]["van_media"] / 1e6 for a in ALTERNATIVAS], 0.4,
+            ax6.bar(x + desplaz, [ii[a]["van_media"] / 1e6 for a in ALTERNATIVAS], 0.4,
                     color=["#bfbfbf", "#7f7f7f"][k], label=f"{rel} – media")
-            ax4.scatter(x + desplaz, [ii[a]["van_p5"] / 1e6 for a in ALTERNATIVAS], color="black",
+            ax6.scatter(x + desplaz, [ii[a]["van_p5"] / 1e6 for a in ALTERNATIVAS], color="black",
                         marker=["v", "^"][k], zorder=3, label=f"{rel} – P5")
-        ax4.set_xticks(x, [NOMBRES[a] for a in ALTERNATIVAS])
-        ax4.set_ylabel("VAN (millones $)")
-        ax4.set_title(f"Persistencia: Markov vs años independientes (G = {fmt(pers['pi_G'], 3)})")
-        ax4.legend(fontsize=7)
-        ax4.grid(alpha=0.3, axis="y")
+        ax6.set_xticks(x, [NOMBRES[a].split()[0] for a in ALTERNATIVAS])
+        ax6.set_ylabel("VAN (millones $)")
+        ax6.set_title(f"Persistencia (G = {fmt(pers['pi_G'], 3)})")
+        ax6.legend(fontsize=6)
+        ax6.grid(alpha=0.3, axis="y")
         self.canvas_dec.draw()
 
         self.tv_pers.delete(*self.tv_pers.get_children())

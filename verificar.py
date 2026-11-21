@@ -91,7 +91,7 @@ def main():
     tabla(ind, [("van_media", "VAN medio"), ("van_desvio", "VAN desvío"), ("van_p5", "VAN P5"),
                 ("pct_van_negativo", "% réplicas VAN < 0"), ("media", "suma sin descontar"),
                 ("p5", "suma sin descontar P5"), ("pct_anios_perdida", "% años con pérdida"),
-                ("peor_anio", "peor año")])
+                ("p1_anual", "percentil 1 anual"), ("peor_anio", "peor año")])
     mejor = sens.elegir_mejor(ind, p.criterio_p5_minimo)
     print(f"   Mejor (mayor VAN medio con P5 > 0): {NOMBRES[ALTERNATIVAS[mejor]] if mejor >= 0 else 'ninguna'}")
 
@@ -106,16 +106,42 @@ def main():
         print(f"   {pr:6.0f}  {fila}   {NOMBRES[ALTERNATIVAS[mj]] if mj >= 0 else 'ninguna'}")
 
     print(LINEA)
-    print("8. Mapa de mejor alternativa (hectáreas 1–30 × multiplicador de granizadas)")
-    mults = np.arange(p.sens_frec_min, p.sens_frec_max + 1e-9, p.sens_frec_paso)
-    mapa = sens.mapa_mejor(p, range(1, p.sens_ha_max + 1), mults)
+    print("8. Hectáreas: con costo fijo 0 el VAN escala exactamente con las ha")
+    for ha in (1, 10, 30):
+        otra = mc.evaluar_escenarios(res.esc, replace(p, hectareas=ha))
+        err = max(float(np.max(np.abs(otra.van[a] - res.van[a] * ha / p.hectareas))) for a in ALTERNATIVAS)
+        print(f"   {ha:3d} ha: error máximo |VAN(ha) − VAN(5,3)·ha/5,3| = {err:.2e} $")
+    print(f"   Por encima de {p.fca_max_hectareas:.0f} ha el Fondo no está disponible (límite real).")
+
     letras = {-1: "·", 0: "S", 1: "F", 2: "M"}
-    print("   (S = sin protección, F = Fondo, M = malla, · = ninguna)")
-    for i, mu in enumerate(mults):
-        print(f"   ×{mu:4.2f}  " + "".join(letras[x] for x in mapa["mejor"][i]))
+    print(LINEA)
+    print(f"9. Severidad del daño ({p.replicas} réplicas por factor)")
+    factores = np.round(np.arange(0.25, 3.001, 0.25), 2)
+    precios_m = np.arange(200, 1001, 50)
+    sev = sens.analisis_severidad(p, factores, precios_m, np.arange(1, 61), replicas=p.replicas)
+    print("   factor  P(paga)  pérdida  pagos/aportes  DACC   VAN sin / Fondo / malla (M)      P5 sin / Fondo / malla (M)   mejor")
+    for i, fct in enumerate(factores):
+        vm = " / ".join(f"{sev['van_media'][a][i] / 1e6:6.1f}" for a in ALTERNATIVAS)
+        v5 = " / ".join(f"{sev['van_p5'][a][i] / 1e6:6.1f}" for a in ALTERNATIVAS)
+        mj = sev["mejor"][i]
+        print(f"   ×{fct:4.2f}  {sev['prob_paga'][i]:7.3f}  {sev['perdida_media'][i]:7.3f}  {sev['pagos_sobre_aportes'][i]:13.2f}  "
+              f"{'sí' if sev['dentro_dacc'][i] else 'no':4}   {vm}   {v5}   {letras[mj]}")
+    fino = np.round(np.arange(0.20, 0.601, 0.025), 3)
+    sev_f = sens.analisis_severidad(p, fino, [p.precio_uva], [p.hectareas], replicas=p.replicas)
+    print("   Barrido fino del cruce: " + " ".join(f"×{x:.3f}:{letras[m]}" for x, m in zip(fino, sev_f["mejor"])))
+    for a_, b_, m1, m2 in sens.factor_cambio_fondo(sev_f):
+        k = list(fino).index(b_)
+        print(f"   → el Fondo cambia entre ×{a_:.3f} y ×{b_:.3f} ({letras[m1]} → {letras[m2]}); "
+              f"pagos/aportes ≈ {sev_f['pagos_sobre_aportes'][k]:.2f}, pérdida media ≈ {sev_f['perdida_media'][k]:.3f}")
+    print("   Mapa precio (200–1000, paso 50) × severidad   (S sin protección, F Fondo, M malla, · ninguna)")
+    for i, fct in enumerate(factores):
+        print(f"   ×{fct:4.2f}  " + "".join(letras[x] for x in sev["mapa_precio"][i]))
+    print("   Mapa hectáreas (1–60) × severidad")
+    for i, fct in enumerate(factores):
+        print(f"   ×{fct:4.2f}  " + "".join(letras[x] for x in sev["mapa_ha"][i]))
 
     print(LINEA)
-    print("9. Persistencia: cadena de Markov real vs años independientes (misma proporción de G)")
+    print("10. Persistencia: cadena de Markov real vs años independientes (misma proporción de G)")
     pers = sens.persistencia(p, res)
     for nombre in ("markov", "independiente"):
         x = pers[nombre]
